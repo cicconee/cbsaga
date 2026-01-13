@@ -10,6 +10,7 @@ migrate_up() {
   local name="$1"
   local migrate_dir="$2"
   local dsn="$3"
+  local container="$4"
 
   if [[ -z "$dsn" ]]; then
     echo "❌ [$name] DSN is empty" >&2
@@ -18,6 +19,13 @@ migrate_up() {
 
   if [[ ! -d "$migrate_dir" ]]; then
     echo "❌ [$name] migrations dir not found: $migrate_dir" >&2
+    exit 1
+  fi
+
+  if ! docker exec -i "$container" \
+    psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    -tAc "SELECT 1 FROM pg_database WHERE datname='${name}'" | grep -q 1; then
+    echo "❌ [${name}] database '${name}' does not exist."
     exit 1
   fi
 
@@ -32,7 +40,7 @@ migrate_up() {
 
 echo "Running migrations..."
 
-migrate_up "orchestrator" "db/orchestrator/migrations" "$ORCHESTRATOR_DSN"
-migrate_up "identity" "db/identity/migrations" "$IDENTITY_DSN"
+migrate_up "orchestrator" "db/orchestrator/migrations" "$ORCHESTRATOR_DSN" "cbsaga-postgres"
+migrate_up "identity" "db/identity/migrations" "$IDENTITY_DSN" "cbsaga-identity-postgres"
 
 echo "✅ migrations complete"
