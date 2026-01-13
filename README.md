@@ -97,160 +97,25 @@ It mirrors patterns used in real financial systems without claiming to be produc
 
 ## Getting Started
 
-Start up the required Docker containers in detached mode.
+The quickest way to get started is by using the `make` command. Make sure the bash scripts are marked as executable.
 
 ```zsh
-docker compose -f deployments/docker-compose.yml up -d
+chmod +x scripts/*.sh
 ```
 
-To shutdown the Docker containers run the following command. You can append `-v` to the end of the command to destroy volumes.
+By running the following command, you will spin up infrastructure, run migrations, register Debezium connectors on the Postgres WAL, build binaries, run the services, and tail the logs.
 
 ```zsh
-docker compose -f deployments/docker-compose.yml down
+make demo
 ```
 
-### Database
+To kill the run you can run `make stop`. Also, `make clean` will run the `stop` command followed by the removal of the `bin` and `.run` directories.
 
-Ensure the databases are created on the docker container using the following commands.
-
-```zsh
-docker exec -it cbsaga-postgres psql -U postgres -d postgres -c "CREATE DATABASE orchestrator;"
-docker exec -it cbsaga-identity-postgres psql -U postgres -d postgres -c "CREATE DATABASE identity;"
-```
-
-Then run the database migrations.
-
-```zsh
-docker run --rm \
-  --network deployments_default \
-  -v "$(pwd)/db/orchestrator/migrations:/migrations" \
-  migrate/migrate:v4.17.1 \
-  -path=/migrations -database="postgres://postgres:postgres@postgres:5432/orchestrator?sslmode=disable" up
-
-docker run --rm \
-  --network deployments_default \
-  -v "$(pwd)/db/identity/migrations:/migrations" \
-  migrate/migrate:v4.17.1 \
-  -path=/migrations -database="postgres://postgres:postgres@identity-postgres:5432/identity?sslmode=disable" up
-```
-
-Verify the tables exist with the following commands.
-
-```zsh
-docker exec -it cbsaga-postgres \
-  psql -U postgres -d orchestrator -c "\dt orchestrator.*"
-
-docker exec -it cbsaga-identity-postgres \
-  psql -U postgres -d identity -c "\dt identity.*"
-```
-
-### Debezium
-
-Create the connector that will watch for withdrawal events via the `orchestrator_outbox_events` table.
-
-```zsh
-curl -s -X POST http://localhost:8083/connectors \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "cbsaga-orchestrator-outbox",
-    "config": {
-      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-      "tasks.max": "1",
-      "database.hostname": "postgres",
-      "database.port": "5432",
-      "database.user": "postgres",
-      "database.password": "postgres",
-      "database.dbname": "orchestrator",
-      "plugin.name": "pgoutput",
-      "topic.prefix": "cbsaga.orchestrator",
-      "schema.include.list": "orchestrator",
-      "table.include.list": "orchestrator.outbox_events",
-      "publication.autocreate.mode": "filtered",
-      "publication.name": "cbsaga_orch_pub",
-      "slot.name": "cbsaga_orch_slot",
-      "tombstones.on.delete": "false",
-      "transforms": "outbox",
-      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-      "transforms.outbox.route.by.field": "aggregate_type",
-      "transforms.outbox.route.topic.replacement": "cbsaga.outbox.${routedByValue}",
-      "transforms.outbox.table.field.event.id": "event_id",
-      "transforms.outbox.table.field.event.key": "aggregate_id",
-      "transforms.outbox.table.field.event.type": "event_type",
-      "transforms.outbox.table.field.event.payload": "payload_json",
-      "transforms.outbox.table.expand.json.payload": "true",
-      "transforms.outbox.table.fields.additional.placement": "trace_id:header,created_at:header"
-    }
-  }' | cat
-```
-
-Create the connector that will watch for identity events via the `identity.outbox_events`.
-
-```zsh
-curl -s -X POST http://localhost:8083/connectors \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "cbsaga-identity-outbox",
-    "config": {
-      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-      "tasks.max": "1",
-      "database.hostname": "identity-postgres",
-      "database.port": "5432",
-      "database.user": "postgres",
-      "database.password": "postgres",
-      "database.dbname": "identity",
-      "plugin.name": "pgoutput",
-      "topic.prefix": "cbsaga.identity",
-      "schema.include.list": "identity",
-      "table.include.list": "identity.outbox_events",
-      "publication.autocreate.mode": "filtered",
-      "publication.name": "cbsaga_identity_pub",
-      "slot.name": "cbsaga_identity_slot",
-      "tombstones.on.delete": "false",
-      "transforms": "outbox",
-      "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
-      "transforms.outbox.route.by.field": "aggregate_type",
-      "transforms.outbox.route.topic.replacement": "cbsaga.outbox.${routedByValue}",
-      "transforms.outbox.table.field.event.id": "event_id",
-      "transforms.outbox.table.field.event.key": "aggregate_id",
-      "transforms.outbox.table.field.event.type": "event_type",
-      "transforms.outbox.table.field.event.payload": "payload_json",
-      "transforms.outbox.table.expand.json.payload": "true",
-      "transforms.outbox.table.fields.additional.placement": "trace_id:header,created_at:header"
-    }
-  }' | cat
-```
-
-Then verify the connector is running.
-
-```zsh
-curl -s http://localhost:8083/connectors | cat
-```
-
-You can also check the status using these command.
-
-```zsh
-curl -s http://localhost:8083/connectors/cbsaga-orchestrator-outbox/status | cat
-curl -s http://localhost:8083/connectors/cbsaga-identity-outbox/status | cat
-```
-
-With the connector configured, you can watch topics on the RedPanda console hosted at `http://localhost:8080`.
-
-### Orchestrator
-
-Start up the orchestrator by running the `cmd/orchestrator/main.go` file. Verify the `grpc` server is running with the following commands.
-
-```zsh
-grpcurl -plaintext localhost:9000 grpc.health.v1.Health/Check
-grpcurl -plaintext localhost:9000 list
-```
-
-### Identity Service
-
-Start up the identity service by running the `cmd/identity/main.go` file.
+**Note: Theres a connector issue with the timeouts and kafka/redpanda that I have not had time to dig deep into yet. If events stop making their way to identity service, run `make down-v`, which will destroy infrastructure and the volume associated with it. From there run a `make clean` and it will be like you are starting fresh. This shouldn't happen unless you leave it running for a long time or kill and restart many times.**
 
 ## Using the gRPC server
 
-The following command can be used to initiate a new withdrawal event.
+Once you are up and running, you can play around sending in withdrawal requests to the gRPC server. I recommend playing around with different requests (unique requests, duplicate requests, different requests with same idempotency key, etc.).
 
 ```zsh
 grpcurl -plaintext -d '{
@@ -262,7 +127,7 @@ grpcurl -plaintext -d '{
 }' localhost:9000 cbsaga.orchestrator.v1.OrchestratorService/CreateWithdrawal
 ```
 
-As you mess around with different requests, you can view the different topics at `http://localhost:8080`.
+**Note: You can view the RedPanda console at `http://localhost:8080`.**
 
 ## Developer Guide
 
