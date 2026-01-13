@@ -28,7 +28,6 @@ The goal is not completeness, but to make design decisions and tradeoffs explici
 ### Tech Stack
 
 - Go v1.24
-- Golang-Migrate v4.16
 - Docker
 - Postgres v16
 - RedPanda (Kafka compatible)
@@ -122,15 +121,17 @@ docker exec -it cbsaga-identity-postgres psql -U postgres -d postgres -c "CREATE
 Then run the database migrations.
 
 ```zsh
-migrate \
-  -path db/orchestrator/migrations \
-  -database "postgres://postgres:postgres@localhost:5432/orchestrator?sslmode=disable" \
-  up
+docker run --rm \
+  --network deployments_default \
+  -v "$(pwd)/db/orchestrator/migrations:/migrations" \
+  migrate/migrate:v4.17.1 \
+  -path=/migrations -database="postgres://postgres:postgres@postgres:5432/orchestrator?sslmode=disable" up
 
-migrate \
-  -path db/identity/migrations \
-  -database "postgres://postgres:postgres@localhost:5433/identity?sslmode=disable" \
-  up
+docker run --rm \
+  --network deployments_default \
+  -v "$(pwd)/db/identity/migrations:/migrations" \
+  migrate/migrate:v4.17.1 \
+  -path=/migrations -database="postgres://postgres:postgres@identity-postgres:5432/identity?sslmode=disable" up
 ```
 
 Verify the tables exist with the following commands.
@@ -276,6 +277,15 @@ migrate create \
   -ext sql \
   -dir $MIGRATION_PATH \
   $MIGRATION_NAME
+```
+
+Or you can use the migrate docker container.
+
+```zsh
+docker run --rm \
+  -v "$(pwd)/$MIGRATION_PATH:/migrations" \
+  migrate/migrate:v4.17.1 \
+  create -ext sql -dir /migrations -seq $MIGRATION_NAME
 ```
 
 ### Generating Protobuf Code
