@@ -1,0 +1,102 @@
+package repo
+
+import (
+	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+type CreateWithdrawalParams struct {
+	WithdrawalID    string
+	SagaID          string
+	UserID          string
+	Asset           string
+	AmountMinor     int64
+	DestinationAddr string
+	TraceID         string
+	OutboxEventType string
+	OutboxPayload   string
+}
+
+type CreateWithdrawalResult struct {
+	WithdrawalID string
+	Status       string
+}
+
+type Repo struct{}
+
+func New() *Repo { return &Repo{} }
+
+func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdrawalParams) (CreateWithdrawalResult, error) {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO orchestrator.withdrawals
+			(id, user_id, asset, amount_minor, destination_addr, status)
+		VALUES
+			($1, $2, $3, $4, $5, 'REQUESTED')
+	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr)
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO orchestrator.saga_instances
+			(saga_id, withdrawal_id, state, current_step, attempt)
+		VALUES
+			($1, $2, 'STARTED', 'IDENTITY_CHECK', 0)
+	`, p.SagaID, p.WithdrawalID)
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO orchestrator.outbox_events
+			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id)
+		VALUES
+			(gen_random_uuid(), 'withdrawal', $1, $2, $3, $4)
+	`, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID)
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
+
+	return CreateWithdrawalResult{
+		WithdrawalID: p.WithdrawalID,
+		Status:       "REQUESTED",
+	}, nil
+}
+
+type GetWithdrawalParams struct {
+	WithdrawalID string
+}
+
+type GetWithdrawalResult struct {
+	WithdrawalID    string
+	UserID          string
+	Asset           string
+	AmountMinor     int64
+	DestinationAddr string
+	Status          string
+	FailureReason   *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+func (r *Repo) GetWithdrawalTx(ctx context.Context, tx pgx.Tx, p GetWithdrawalParams) (GetWithdrawalResult, error) {
+	var res GetWithdrawalResult
+	err := tx.QueryRow(ctx, `
+		SELECT id, user_id, asset, amount_minor, destination_addr, status, failure_reason, created_at, updated_at
+		FROM orchestrator.withdrawals
+		WHERE id = $1
+	`, p.WithdrawalID).Scan(
+		&res.WithdrawalID,
+		&res.UserID,
+		&res.Asset,
+		&res.AmountMinor,
+		&res.DestinationAddr,
+		&res.Status,
+		&res.FailureReason,
+		&res.CreatedAt,
+		&res.UpdatedAt,
+	)
+	return res, err
+}

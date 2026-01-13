@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package cbsaga.orchestrator.v1;
+
+option go_package = "github.com/cicconee/cbsaga/gen/orchestrator/v1;orchestratorv1";
+
+service OrchestratorService {
+  rpc CreateWithdrawal(CreateWithdrawalRequest) returns (CreateWithdrawalResponse);
+  rpc GetWithdrawal(GetWithdrawalRequest) returns (GetWithdrawalResponse);
+}
+
+message CreateWithdrawalRequest {
+  string user_id = 1;
+  string asset = 2;
+  int64 amount_minor = 3;
+  string destination_addr = 4;
+  string idempotency_key = 5;
+}
+
+message CreateWithdrawalResponse {
+  string withdrawal_id = 1;
+  string status = 2;
+}
+
+message GetWithdrawalRequest {
+  string withdrawal_id = 1;
+}
+
+message GetWithdrawalResponse {
+  string withdrawal_id = 1;
+  string user_id = 2;
+  string asset = 3;
+  int64 amount_minor = 4;
+  string destination_addr = 5;
+  string status = 6;
+  string failure_reason = 7;
+  string created_at = 8;
+  string updated_at = 9;
+}
