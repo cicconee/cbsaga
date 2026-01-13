@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,27 @@ func LoadOrchestrator() (OrchestratorConfig, error) {
 		return OrchestratorConfig{}, fmt.Errorf("CBSAGA_ORCH_GRPC_ADDR cannot be empty")
 	}
 
+	return cfg, nil
+}
+
+type IdentityConfig struct {
+	Env             string
+	PostgresDSN     string
+	KafkaBrokers    []string
+	KafkaGroupID    string
+	KafkaTopic      string
+	ShutdownTimeout time.Duration
+}
+
+func LoadIdentity() (IdentityConfig, error) {
+	cfg := IdentityConfig{
+		Env:             getenv("CBSAGA_ENV", "dev"),
+		PostgresDSN:     getenv("CBSAGA_IDENTITY_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5433/identity?sslmode=disable"),
+		KafkaBrokers:    splitCSV(getenv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
+		KafkaGroupID:    getenv("CBSAGA_IDENTITY_GROUP_ID", "cbsaga-identity"),
+		KafkaTopic:      getenv("CBSAGA_IDENTITY_TOPIC", "cbsaga.outbox.withdrawal"),
+		ShutdownTimeout: getenvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
+	}
 	return cfg, nil
 }
 
@@ -53,4 +75,17 @@ func getenvDuration(key string, def time.Duration) time.Duration {
 	}
 
 	return def
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }

@@ -1,0 +1,6 @@
+BEGIN;
+
+DROP SCHEMA IF EXISTS identity CASCADE;
+
+COMMIT;
+
