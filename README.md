@@ -2,6 +2,27 @@
 
 Coinbase Saga is a distributed transaction orchestration system that models how high risk financial actions are safely initiated, validated, and progressed across multiple services using saga, transactional outbox, and idempotency patterns.
 
+## Note for the Coinbase Team
+
+This repository was started very recently (within the last day as of the first commit) as a way to demonstrate how I think about designing reliable, money-movement systems. Specifically around distributed transactions, state transitions, idempotency, and failure handling using a saga-style approach with a transactional outbox.
+
+The project is actively being developed, and updates will continue leading up to the interview and beyond. As time allows, I plan to expand it with additional services, clearer failure paths, and deeper functionality to better reflect a real-world distributed system.
+
+Given the short time window so far, I intentionally prioritized:
+
+- Core system architecture and data flow
+- Explicit state transitions and invariants
+- Cross-service coordination patterns
+- Correctness and failure awareness over completeness
+
+As a result, some production-critical concerns, such as exhaustive test coverage, extensive comments, and broader documentation are intentionally lighter than they would be in a mature or long-lived codebase. In a real production setting, these would be developed alongside the system as it evolved.
+
+Similarly, some commits are larger than would be typical in a long-lived repository, which is a byproduct of the exploratory, time constrained nature of the work rather than how I’d normally structure commits.
+
+This repository is best viewed as a living system under construction, focused first on correctness and design clarity rather than polish.
+
+The goal is not completeness, but to make design decisions and tradeoffs explicit and discussable.
+
 ## Tech Stack
 
 - Go v1.21
