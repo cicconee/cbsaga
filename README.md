@@ -18,9 +18,9 @@ Given the short time window so far, I intentionally prioritized:
 
 As a result, some production-critical concerns, such as exhaustive test coverage, extensive comments, and broader documentation are intentionally lighter than they would be in a mature or long-lived codebase. In a real production setting, these would be developed alongside the system as it evolved.
 
-Similarly, some commits are larger than would be typical in a long-lived repository, which is a byproduct of the exploratory, time constrained nature of the work rather than how I’d normally structure commits.
+Similarly, some commits are larger than one would typically see in a long-lived repository. This is a byproduct of the exploratory, time constrained nature of the work rather than how I’d normally structure commits.
 
-This repository is best viewed as a living system under construction, focused first on correctness and design clarity rather than polish.
+This repository is best viewed as a living system under construction. It's focused first on correctness and design clarity, rather than polish.
 
 The goal is not completeness, but to make design decisions and tradeoffs explicit and discussable.
 
