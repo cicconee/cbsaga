@@ -14,6 +14,7 @@ Given the short time window so far, I intentionally prioritized:
 - Explicit state transitions and invariants
 - Cross-service coordination patterns
 - Correctness and failure awareness over completeness
+- Fast local deployability to respect reviewer time (`make demo` brings the system up end-to-end).
 
 As a result, some production-critical concerns, such as exhaustive test coverage, extensive comments, and broader documentation are intentionally lighter than they would be in a mature or long-lived codebase. In a real production setting, these would be developed alongside the system as it evolved.
 
