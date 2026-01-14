@@ -127,6 +127,22 @@ grpcurl -plaintext -d '{
 }' localhost:9000 cbsaga.orchestrator.v1.OrchestratorService/CreateWithdrawal
 ```
 
+Reflection is enabled for this demo environment. But if you decide to disable it, gRPC commands need to be sent with the proto files explicitly.
+
+```zsh
+grpcurl -plaintext \
+  -import-path ./proto \
+  -proto cbsaga/orchestrator/v1/orchestrator.proto \
+  -d '{
+    "user_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "asset":"ASSET",
+    "amount_minor":1000000,
+    "destination_addr":"DESTINATION_ADDR",
+    "idempotency_key":"1"
+  }' \
+  localhost:9000 cbsaga.orchestrator.v1.OrchestratorService/CreateWithdrawal
+```
+
 **Note: You can view the RedPanda console at `http://localhost:8080`.**
 
 ## Developer Guide
