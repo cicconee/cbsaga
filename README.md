@@ -4,7 +4,10 @@ Coinbase Saga is a distributed transaction orchestration system that models how 
 
 ## Note for the Coinbase Team
 
-**On hold while I prep for CodeSignal assessment.**
+**<del>On hold while I prep for CodeSignal assessment.</del>**
+
+**Jan 23rd: CodeSignal assessment complete. Development continues.**
+
 
 This repository was started very recently (within the last day as of the first commit) as a way to demonstrate how I think about designing reliable, money-movement systems. Specifically around distributed transactions, state transitions, idempotency, and failure handling using a saga-style approach with a transactional outbox.
 
