@@ -9,7 +9,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/api"
 	"github.com/cicconee/cbsaga/internal/orchestrator/app"
-	"github.com/cicconee/cbsaga/internal/platform/config"
+	"github.com/cicconee/cbsaga/internal/orchestrator/config"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/grpcserver"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -22,7 +22,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.LoadOrchestrator()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Error("config load failed", "err", err)
 		os.Exit(1)

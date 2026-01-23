@@ -7,8 +7,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/identity/config"
 	"github.com/cicconee/cbsaga/internal/identity/consumer"
-	"github.com/cicconee/cbsaga/internal/platform/config"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
 )
@@ -19,7 +19,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.LoadIdentity()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Error("config load failed", "err", err)
 		os.Exit(1)
