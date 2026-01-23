@@ -7,22 +7,23 @@ import (
 )
 
 type IdentityConfig struct {
-	Env             string
-	PostgresDSN     string
-	KafkaBrokers    []string
-	KafkaGroupID    string
-	KafkaTopic      string
-	ShutdownTimeout time.Duration
+	Env                     string
+	ShutdownTimeout         time.Duration
+	PostgresDSN             string
+	KafkaBrokers            []string
+	WithdrawalTopic         string
+	IdentityConsumerGroupID string
 }
 
 func Load() (IdentityConfig, error) {
 	cfg := IdentityConfig{
-		Env:             config.GetEnv("CBSAGA_ENV", "dev"),
-		PostgresDSN:     config.GetEnv("CBSAGA_IDENTITY_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5433/identity?sslmode=disable"),
-		KafkaBrokers:    config.SplitCSV(config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
-		KafkaGroupID:    config.GetEnv("CBSAGA_IDENTITY_GROUP_ID", "cbsaga-identity"),
-		KafkaTopic:      config.GetEnv("CBSAGA_IDENTITY_TOPIC", "cbsaga.outbox.withdrawal"),
-		ShutdownTimeout: config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
+		Env:                     config.GetEnv("CBSAGA_ENV", "dev"),
+		ShutdownTimeout:         config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
+		PostgresDSN:             config.GetEnv("CBSAGA_IDENTITY_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5433/identity?sslmode=disable"),
+		KafkaBrokers:            config.SplitCSV(config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
+		WithdrawalTopic:         config.GetEnv("CBSAGA_WITHDRAWAL_TOPIC", "cbsaga.outbox.withdrawal"),
+		IdentityConsumerGroupID: config.GetEnv("CBSAGA_IDENTITY_CONSUMER_GROUP_ID", "cbsaga-identity"),
 	}
+
 	return cfg, nil
 }
