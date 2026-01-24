@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -95,8 +96,8 @@ func (r *Repo) ApplyIdentityResultTx(ctx context.Context, tx pgx.Tx, p ApplyIden
 		INSERT INTO orchestrator.outbox_events
 			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id)
 		VALUES
-			(gen_random_uuid(), 'withdrawal', $1, $2, $3, $4)
-	`, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID)
+			(gen_random_uuid(), $1, $2, $3, $4, $5)
+	`, orchestrator.AggregateTypeWithdrawal, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID)
 	if err != nil {
 		return fmt.Errorf("insert outbox WithdrawalFailed: %w", err)
 	}
