@@ -13,3 +13,8 @@ const (
 	EventTypeIdentityRequested = "VerifyIdentityRequested"
 	EventTypeIdentityVerified  = "IdentityVerified"
 )
+
+const (
+	RouteKeyIdentityCmd = "cmd.identity"
+	RouteKeyIdentityEvt = "evt.identity"
+)
