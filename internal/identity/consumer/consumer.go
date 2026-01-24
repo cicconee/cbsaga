@@ -29,7 +29,7 @@ func New(db *pgxpool.Pool, log *logging.Logger, brokers []string, groupID, topic
 		MinBytes:    1,
 		MaxBytes:    10e6, // 10mb
 		MaxWait:     500 * time.Millisecond,
-		StartOffset: kafka.FirstOffset,
+		StartOffset: kafka.LastOffset,
 	})
 
 	return &Consumer{
