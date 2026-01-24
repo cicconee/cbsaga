@@ -10,6 +10,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/api"
 	"github.com/cicconee/cbsaga/internal/orchestrator/app"
 	"github.com/cicconee/cbsaga/internal/orchestrator/config"
+	"github.com/cicconee/cbsaga/internal/orchestrator/consumer"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/grpcserver"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -38,6 +39,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	idc := consumer.NewIdentity(pool, log, cfg.KafkaBrokers, cfg.OrchestratorGroupID, cfg.IdentityTopic)
+	defer func() { _ = idc.Close() }()
+
+	go func() {
+		if err := idc.Run(ctx); err != nil {
+			log.Error("identity consumer crashed", "err", err)
+		}
+	}()
 
 	svc := app.NewService(pool)
 
