@@ -79,18 +79,18 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 
 		// Mocking identity verification for now. Maybe implement this or add some random REJECTED and delays?
-		decision := "VERIFIED"
+		status := "VERIFIED"
 		var reason *string
 
 		outboxType := "IdentityVerified"
-		if decision == "REJECTED" {
+		if status == "REJECTED" {
 			outboxType = "IdentityRejected"
 		}
 
 		payload := map[string]any{
 			"withdrawal_id": evt.WithdrawalID,
 			"user_id":       evt.UserID,
-			"status":        decision,
+			"status":        status,
 		}
 		if reason != nil {
 			payload["reason"] = *reason
@@ -109,7 +109,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			VerificationID:  verificationID,
 			WithdrawalID:    evt.WithdrawalID,
 			UserID:          evt.UserID,
-			Decision:        decision,
+			Status:          status,
 			Reason:          reason,
 			OutboxEventType: outboxType,
 			OutboxPayload:   string(b),
@@ -130,7 +130,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		c.log.Info("identity emitted decision",
 			"withdrawal_id", evt.WithdrawalID,
-			"decision", decision,
+			"decision", status,
 			"event_type", outboxType,
 			"trace_id", traceID,
 		)

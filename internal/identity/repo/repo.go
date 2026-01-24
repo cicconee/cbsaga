@@ -14,7 +14,7 @@ type VerifyAndEmitParams struct {
 	VerificationID  string
 	WithdrawalID    string
 	UserID          string
-	Decision        string
+	Status          string
 	Reason          *string
 	OutboxEventType string
 	OutboxPayload   string
@@ -28,7 +28,7 @@ func (r *Repo) VerifyAndEmitTx(ctx context.Context, tx pgx.Tx, p VerifyAndEmitPa
 		VALUES
 			($1, $2, $3, $4, $5)
 		ON CONFLICT (withdrawal_id) DO NOTHING
-	`, p.VerificationID, p.WithdrawalID, p.UserID, p.Decision, p.Reason)
+	`, p.VerificationID, p.WithdrawalID, p.UserID, p.Status, p.Reason)
 	if err != nil {
 		return err
 	}
