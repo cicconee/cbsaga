@@ -111,6 +111,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			OutboxEventType: outboxType,
 			OutboxPayload:   string(b),
 			TraceID:         traceID,
+			RouteKey:        identity.RouteKeyIdentityEvt,
 		}); err != nil {
 			c.log.Error("VerifyAndEmitTx failed", "err", err, "withdrawal_id", evt.WithdrawalID)
 			return err
