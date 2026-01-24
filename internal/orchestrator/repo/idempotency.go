@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,7 +29,7 @@ type ReserveIdempotencyParams struct {
 
 type ReserveIdempotencyResult struct {
 	Owned            bool
-	Status           IdemStatus
+	Status           string
 	WithdrawalID     string
 	RequestHash      string
 	GRPCCode         int
@@ -55,7 +56,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	if inserted {
 		return ReserveIdempotencyResult{
 			Owned:        true,
-			Status:       IdemInProgress,
+			Status:       orchestrator.IdemInProgress,
 			WithdrawalID: p.WithdrawalID,
 			RequestHash:  p.RequestHash,
 		}, nil
@@ -82,7 +83,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 
 	return ReserveIdempotencyResult{
 		Owned:            false,
-		Status:           IdemStatus(status),
+		Status:           status,
 		WithdrawalID:     withdrawalID,
 		RequestHash:      requestHash,
 		GRPCCode:         grpcCode,
