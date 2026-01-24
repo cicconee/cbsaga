@@ -21,7 +21,7 @@ func Load() (IdentityConfig, error) {
 		ShutdownTimeout:         config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
 		PostgresDSN:             config.GetEnv("CBSAGA_IDENTITY_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5433/identity?sslmode=disable"),
 		KafkaBrokers:            config.SplitCSV(config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
-		WithdrawalTopic:         config.GetEnv("CBSAGA_WITHDRAWAL_TOPIC", "cbsaga.outbox.withdrawal"),
+		WithdrawalTopic:         config.GetEnv("CBSAGA_WITHDRAWAL_TOPIC", "cbsaga.cmd.identity"),
 		IdentityConsumerGroupID: config.GetEnv("CBSAGA_IDENTITY_CONSUMER_GROUP_ID", "cbsaga-identity"),
 	}
 

@@ -24,7 +24,7 @@ func Load() (OrchestratorConfig, error) {
 		ShutdownTimeout:     config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
 		PostgresDSN:         config.GetEnv("CBSAGA_ORCH_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/orchestrator?sslmode=disable"),
 		KafkaBrokers:        config.SplitCSV(config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
-		IdentityTopic:       config.GetEnv("CBSAGA_ORCH_IDENTITY_TOPIC", "cbsaga.outbox.identity"),
+		IdentityTopic:       config.GetEnv("CBSAGA_ORCH_IDENTITY_TOPIC", "cbsaga.evt.identity"),
 		OrchestratorGroupID: config.GetEnv("CBSAGA_ORCH_GROUP_ID", "cbsaga-orchestrator"),
 	}
 
