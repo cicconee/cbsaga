@@ -8,6 +8,9 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/shared/identity"
+	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
+	"github.com/cicconee/cbsaga/internal/shared/risk"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/segmentio/kafka-go"
@@ -95,12 +98,12 @@ func (i *Identity) Run(ctx context.Context) error {
 		var outboxEventType string
 		var status string
 		switch evt.Status {
-		case "VERIFIED":
-			outboxEventType = "RiskCheckRequested"
-			status = "IN_PROGRESS"
-		case "REJECTED":
-			outboxEventType = "WithdrawalFailed"
-			status = "FAILED"
+		case identity.IdentityStatusVerified:
+			outboxEventType = risk.EventTypeRiskCheckRequested
+			status = orchestrator.WithdrawalStatusInProgress
+		case identity.IdentityStatusRejected:
+			outboxEventType = orchestrator.EventTypeWithdrawalFailed
+			status = orchestrator.WithdrawalStatusFailed
 		default:
 		}
 		payload := map[string]any{
