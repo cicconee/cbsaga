@@ -32,3 +32,8 @@ const (
 	EventTypeRiskCheckRequested  = "RiskCheckRequested"
 	EventTypeWithdrawalFailed    = "WithdrawalFailed"
 )
+
+const (
+	RouteKeyWithdrawalCmd = "cmd.withdrawal"
+	RouteKeyWithdrawalEvt = "evt.withdrawal"
+)
