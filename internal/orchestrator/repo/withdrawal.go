@@ -24,10 +24,6 @@ type CreateWithdrawalResult struct {
 	Status       string
 }
 
-type Repo struct{}
-
-func New() *Repo { return &Repo{} }
-
 func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdrawalParams) (CreateWithdrawalResult, error) {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO orchestrator.withdrawals
