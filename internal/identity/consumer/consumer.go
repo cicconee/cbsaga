@@ -8,6 +8,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/identity/repo"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,13 +80,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 
 		// Mocking identity verification for now. Maybe implement this or add some random REJECTED and delays?
-		status := "VERIFIED"
+		status := identity.IdentityStatusVerified
+		outboxType := identity.EventTypeIdentityVerified
 		var reason *string
-
-		outboxType := "IdentityVerified"
-		if status == "REJECTED" {
-			outboxType = "IdentityRejected"
-		}
 
 		payload := map[string]any{
 			"withdrawal_id": evt.WithdrawalID,
