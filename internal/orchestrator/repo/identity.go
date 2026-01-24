@@ -38,7 +38,7 @@ func (i *ApplyIdentityResultParams) validate() error {
 		return errors.New("identity event: missing trace_id")
 	}
 	if i.OutboxEventType != risk.EventTypeRiskCheckRequested &&
-		i.OutboxEventType != orchestrator.WithdrawalStatusFailed {
+		i.OutboxEventType != orchestrator.EventTypeWithdrawalFailed {
 		return fmt.Errorf("identity event: invalid outbox event type: %s", i.OutboxEventType)
 	}
 
