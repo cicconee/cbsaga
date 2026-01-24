@@ -116,13 +116,8 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	}
 
 	payload := map[string]any{
-		"withdrawal_id":    withdrawalID,
-		"user_id":          userID,
-		"asset":            asset,
-		"amount_minor":     p.AmountMinor,
-		"destination_addr": dest,
-		"status":           orchestrator.WithdrawalStatusRequested,
-		"saga_id":          sagaID,
+		"withdrawal_id": withdrawalID,
+		"user_id":       userID,
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
