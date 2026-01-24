@@ -29,6 +29,6 @@ const (
 
 const (
 	EventTypeWithdrawalRequested = "WithdrawalRequested"
-	EventTypeRiskCheckCreated    = "RiskCheckRequested"
+	EventTypeRiskCheckRequested  = "RiskCheckRequested"
 	EventTypeWithdrawalFailed    = "WithdrawalFailed"
 )
