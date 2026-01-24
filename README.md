@@ -172,7 +172,7 @@ Or you can use the migrate docker container.
 docker run --rm \
   -v "$(pwd)/$MIGRATION_PATH:/migrations" \
   migrate/migrate:v4.17.1 \
-  create -ext sql -dir /migrations -seq $MIGRATION_NAME
+  create -ext sql -dir /migrations $MIGRATION_NAME
 ```
 
 ### Generating Protobuf Code
