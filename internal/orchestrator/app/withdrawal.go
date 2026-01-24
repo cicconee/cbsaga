@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -142,6 +143,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		TraceID:         p.TraceID,
 		OutboxEventType: orchestrator.EventTypeWithdrawalRequested,
 		OutboxPayload:   string(payloadJSON),
+		RouteKey:        identity.RouteKeyIdentityCmd,
 	})
 	if err != nil {
 		_ = s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, `{"error":"work tx failed"}`)

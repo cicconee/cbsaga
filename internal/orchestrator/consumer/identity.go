@@ -97,13 +97,16 @@ func (i *Identity) Run(ctx context.Context) error {
 		// is now in FAILED status
 		var outboxEventType string
 		var status string
+		var routeKey string
 		switch evt.Status {
 		case identity.IdentityStatusVerified:
 			outboxEventType = risk.EventTypeRiskCheckRequested
 			status = orchestrator.WithdrawalStatusInProgress
+			routeKey = risk.RouteKeyRiskCmd
 		case identity.IdentityStatusRejected:
 			outboxEventType = orchestrator.EventTypeWithdrawalFailed
 			status = orchestrator.WithdrawalStatusFailed
+			routeKey = orchestrator.RouteKeyWithdrawalEvt
 		default:
 		}
 		payload := map[string]any{
@@ -125,6 +128,7 @@ func (i *Identity) Run(ctx context.Context) error {
 			TraceID:         traceID,
 			OutboxEventType: outboxEventType,
 			OutboxPayload:   string(b),
+			RouteKey:        routeKey,
 		}); err != nil {
 			i.log.Error("ApplyIdentityResultTx failed",
 				"err", err,
