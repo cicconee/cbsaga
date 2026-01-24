@@ -97,9 +97,15 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	if !idemRow.Owned {
 		switch idemRow.Status {
 		case orchestrator.IdemInProgress:
-			return CreateWithdrawalResult{WithdrawalID: idemRow.WithdrawalID, Status: "IN_PROGRESS"}, ErrIdempotencyInProgress
+			return CreateWithdrawalResult{
+				WithdrawalID: idemRow.WithdrawalID,
+				Status:       orchestrator.WithdrawalStatusInProgress,
+			}, ErrIdempotencyInProgress
 		case orchestrator.IdemCompleted:
-			return CreateWithdrawalResult{WithdrawalID: idemRow.WithdrawalID, Status: "REQUESTED"}, nil
+			return CreateWithdrawalResult{
+				WithdrawalID: idemRow.WithdrawalID,
+				Status:       orchestrator.WithdrawalStatusRequested,
+			}, nil
 		case orchestrator.IdemFailed:
 			return CreateWithdrawalResult{}, fmt.Errorf("previous attempt failed (grpc_code=%d)", idemRow.GRPCCode)
 		default:
@@ -113,7 +119,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		"asset":            asset,
 		"amount_minor":     p.AmountMinor,
 		"destination_addr": dest,
-		"status":           "REQUESTED",
+		"status":           orchestrator.WithdrawalStatusRequested,
 		"saga_id":          sagaID,
 	}
 	payloadJSON, _ := json.Marshal(payload)
@@ -133,7 +139,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		AmountMinor:     p.AmountMinor,
 		DestinationAddr: dest,
 		TraceID:         p.TraceID,
-		OutboxEventType: "WithdrawalRequested",
+		OutboxEventType: orchestrator.EventTypeWithdrawalRequested,
 		OutboxPayload:   string(payloadJSON),
 	})
 	if err != nil {
