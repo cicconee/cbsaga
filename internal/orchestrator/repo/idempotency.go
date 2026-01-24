@@ -36,10 +36,10 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 			(id, user_id, idempotency_key, withdrawal_id, request_hash,
 			 response_code, response_body_json, status, grpc_code, updated_at)
 		VALUES
-			(gen_random_uuid(), $1, $2, $3, $4, 0, '{}', 'IN_PROGRESS', 0, $5)
+			(gen_random_uuid(), $1, $2, $3, $4, 0, '{}', $5, 0, $6)
 		ON CONFLICT (user_id, idempotency_key) DO NOTHING
 		RETURNING true
-	`, p.UserID, p.IdempotencyKey, p.WithdrawalID, p.RequestHash, p.Now).Scan(&inserted)
+	`, p.UserID, p.IdempotencyKey, p.WithdrawalID, p.RequestHash, orchestrator.IdemInProgress, p.Now).Scan(&inserted)
 
 	if err != nil && err != pgx.ErrNoRows {
 		return ReserveIdempotencyResult{}, err
