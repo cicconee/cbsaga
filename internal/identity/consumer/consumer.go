@@ -57,7 +57,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	c.log.Info("identity consumer started")
 
 	for {
-		m, err := c.r.ReadMessage(ctx)
+		m, err := c.r.FetchMessage(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				c.log.Info("identity consumer stopped")
@@ -120,6 +120,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 
 		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		if err := c.r.CommitMessages(ctx, m); err != nil {
+			c.log.Error("CommitMessages failed", "err", err)
 			return err
 		}
 
