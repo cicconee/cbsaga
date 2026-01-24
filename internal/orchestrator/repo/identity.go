@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
+	"github.com/cicconee/cbsaga/internal/shared/risk"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,13 +30,15 @@ func (i *ApplyIdentityResultParams) validate() error {
 	if i.UserID == "" {
 		return errors.New("identity event: missing user_id")
 	}
-	if i.IdentityStatus != "VERIFIED" && i.IdentityStatus != "REJECTED" {
+	if i.IdentityStatus != identity.IdentityStatusVerified &&
+		i.IdentityStatus != identity.IdentityStatusRejected {
 		return fmt.Errorf("identity event: invalid status %q", i.IdentityStatus)
 	}
 	if i.TraceID == "" {
 		return errors.New("identity event: missing trace_id")
 	}
-	if i.OutboxEventType != "RiskCheckCreated" && i.OutboxEventType != "WithdrawalFailed" {
+	if i.OutboxEventType != risk.EventTypeRiskCheckRequested &&
+		i.OutboxEventType != orchestrator.WithdrawalStatusFailed {
 		return fmt.Errorf("identity event: invalid outbox event type: %s", i.OutboxEventType)
 	}
 
