@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -29,8 +30,8 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 		INSERT INTO orchestrator.withdrawals
 			(id, user_id, asset, amount_minor, destination_addr, status)
 		VALUES
-			($1, $2, $3, $4, $5, 'REQUESTED')
-	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr)
+			($1, $2, $3, $4, $5, $6)
+	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr, orchestrator.WithdrawalStatusInProgress)
 	if err != nil {
 		return CreateWithdrawalResult{}, err
 	}
@@ -39,8 +40,8 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 		INSERT INTO orchestrator.saga_instances
 			(saga_id, withdrawal_id, state, current_step, attempt)
 		VALUES
-			($1, $2, 'STARTED', 'IDENTITY_CHECK', 0)
-	`, p.SagaID, p.WithdrawalID)
+			($1, $2, $3, $4, 0)
+	`, p.SagaID, p.WithdrawalID, orchestrator.SagaStateStarted, orchestrator.SagaStepIdentityCheck)
 	if err != nil {
 		return CreateWithdrawalResult{}, err
 	}
@@ -49,15 +50,15 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 		INSERT INTO orchestrator.outbox_events
 			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id)
 		VALUES
-			(gen_random_uuid(), 'withdrawal', $1, $2, $3, $4)
-	`, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID)
+			(gen_random_uuid(), $1, $2, $3, $4, $5)
+	`, orchestrator.AggregateTypeWithdrawal, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID)
 	if err != nil {
 		return CreateWithdrawalResult{}, err
 	}
 
 	return CreateWithdrawalResult{
 		WithdrawalID: p.WithdrawalID,
-		Status:       "REQUESTED",
+		Status:       orchestrator.WithdrawalStatusRequested,
 	}, nil
 }
 
