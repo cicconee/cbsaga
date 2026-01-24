@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,15 +96,12 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	// Also maybe make FAILED retryable? Worth a thought.
 	if !idemRow.Owned {
 		switch idemRow.Status {
-		case repo.IdemInProgress:
+		case orchestrator.IdemInProgress:
 			return CreateWithdrawalResult{WithdrawalID: idemRow.WithdrawalID, Status: "IN_PROGRESS"}, ErrIdempotencyInProgress
-
-		case repo.IdemCompleted:
+		case orchestrator.IdemCompleted:
 			return CreateWithdrawalResult{WithdrawalID: idemRow.WithdrawalID, Status: "REQUESTED"}, nil
-
-		case repo.IdemFailed:
+		case orchestrator.IdemFailed:
 			return CreateWithdrawalResult{}, fmt.Errorf("previous attempt failed (grpc_code=%d)", idemRow.GRPCCode)
-
 		default:
 			return CreateWithdrawalResult{}, fmt.Errorf("unknown idempotency status: %s", idemRow.Status)
 		}
