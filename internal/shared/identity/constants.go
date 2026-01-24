@@ -10,5 +10,6 @@ const (
 )
 
 const (
-	EventTypeIdentityVerified = "IdentityVerified"
+	EventTypeIdentityRequested = "VerifyIdentityRequested"
+	EventTypeIdentityVerified  = "IdentityVerified"
 )
