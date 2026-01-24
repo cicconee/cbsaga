@@ -99,9 +99,10 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		case orchestrator.IdemInProgress:
 			return CreateWithdrawalResult{
 				WithdrawalID: idemRow.WithdrawalID,
-				Status:       orchestrator.WithdrawalStatusInProgress,
+				Status:       orchestrator.WithdrawalStatusRequested,
 			}, ErrIdempotencyInProgress
 		case orchestrator.IdemCompleted:
+			// TODO: Get the withdrawal status of the withdrawal.
 			return CreateWithdrawalResult{
 				WithdrawalID: idemRow.WithdrawalID,
 				Status:       orchestrator.WithdrawalStatusRequested,
