@@ -96,7 +96,7 @@ func (i *Identity) Run(ctx context.Context) error {
 		var status string
 		switch evt.Status {
 		case "VERIFIED":
-			outboxEventType = "RiskCheckCreated"
+			outboxEventType = "RiskCheckRequested"
 			status = "IN_PROGRESS"
 		case "REJECTED":
 			outboxEventType = "WithdrawalFailed"
