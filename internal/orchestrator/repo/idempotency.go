@@ -11,14 +11,6 @@ import (
 
 var ErrIdempotencyKeyReuse = errors.New("idempotency key reuse with different request")
 
-type IdemStatus string
-
-const (
-	IdemInProgress IdemStatus = "IN_PROGRESS"
-	IdemCompleted  IdemStatus = "COMPLETED"
-	IdemFailed     IdemStatus = "FAILED"
-)
-
 type ReserveIdempotencyParams struct {
 	UserID         string
 	IdempotencyKey string
