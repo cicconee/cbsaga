@@ -8,6 +8,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/identity/repo"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/platform/messaging"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,7 +68,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return err
 		}
 
-		traceID, ok := headerValue(m.Headers, "trace_id")
+		headers := messaging.NewHeaders(m.Headers)
+		traceID, ok := headers.String("trace_id")
 		if !ok || traceID == "" {
 			// TODO: This should never be ignored. This must be made apparent the moment it happens.
 			traceID = "local-trace-id-identity"
@@ -152,13 +154,4 @@ func parseConnectEnvelope(b []byte) (WithdrawalRequested, bool) {
 	}
 
 	return WithdrawalRequested{}, false
-}
-
-func headerValue(headers []kafka.Header, key string) (string, bool) {
-	for _, h := range headers {
-		if h.Key == key {
-			return string(h.Value), true
-		}
-	}
-	return "", false
 }
