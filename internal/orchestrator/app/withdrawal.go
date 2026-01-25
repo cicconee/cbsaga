@@ -136,9 +136,18 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		AmountMinor:     p.AmountMinor,
 		DestinationAddr: dest,
 		TraceID:         p.TraceID,
-		OutboxEventType: orchestrator.EventTypeWithdrawalRequested,
-		OutboxPayload:   string(payloadJSON),
-		RouteKey:        identity.RouteKeyIdentityCmd,
+		OutboxEvents: []repo.OutboxEvent{
+			{
+				EventType: orchestrator.EventTypeWithdrawalRequested,
+				Payload:   string(payloadJSON),
+				RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
+			},
+			{
+				EventType: identity.EventTypeIdentityRequested,
+				Payload:   string(payloadJSON),
+				RouteKey:  identity.RouteKeyIdentityCmd,
+			},
+		},
 	})
 	if err != nil {
 		_ = s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, `{"error":"work tx failed"}`)

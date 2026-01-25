@@ -8,6 +8,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type OutboxEvent struct {
+	EventType string
+	Payload   string
+	RouteKey  string
+}
+
 type CreateWithdrawalParams struct {
 	WithdrawalID    string
 	SagaID          string
@@ -16,9 +22,7 @@ type CreateWithdrawalParams struct {
 	AmountMinor     int64
 	DestinationAddr string
 	TraceID         string
-	OutboxEventType string
-	OutboxPayload   string
-	RouteKey        string
+	OutboxEvents    []OutboxEvent
 }
 
 type CreateWithdrawalResult struct {
@@ -47,21 +51,23 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 		return CreateWithdrawalResult{}, err
 	}
 
-	_, err = tx.Exec(ctx, `
+	for _, evt := range p.OutboxEvents {
+		_, err = tx.Exec(ctx, `
 		INSERT INTO orchestrator.outbox_events
 			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id, route_key)
 		VALUES
 			(gen_random_uuid(), $1, $2, $3, $4, $5, $6)
 	`,
-		orchestrator.AggregateTypeWithdrawal,
-		p.WithdrawalID,
-		p.OutboxEventType,
-		p.OutboxPayload,
-		p.TraceID,
-		p.RouteKey,
-	)
-	if err != nil {
-		return CreateWithdrawalResult{}, err
+			orchestrator.AggregateTypeWithdrawal,
+			p.WithdrawalID,
+			evt.EventType,
+			evt.Payload,
+			p.TraceID,
+			evt.RouteKey,
+		)
+		if err != nil {
+			return CreateWithdrawalResult{}, err
+		}
 	}
 
 	return CreateWithdrawalResult{
