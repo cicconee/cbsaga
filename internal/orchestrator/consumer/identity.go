@@ -8,6 +8,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/platform/messaging"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/cicconee/cbsaga/internal/shared/risk"
@@ -65,13 +66,14 @@ func (i *Identity) Run(ctx context.Context) error {
 			return err
 		}
 
-		traceID, ok := headerValue(m.Headers, "trace_id")
+		headers := messaging.NewHeaders(m.Headers)
+		traceID, ok := headers.String("trace_id")
 		if !ok || traceID == "" {
 			// TODO: This should never be ignored. This must be made apparent the moment it happens.
 			traceID = "local-trace-id-orchestrator"
 		}
 
-		eventType, ok := headerValue(m.Headers, "event_type")
+		eventType, ok := headers.String("event_type")
 		if !ok || eventType == "" {
 			// TODO: Should log.
 			continue
