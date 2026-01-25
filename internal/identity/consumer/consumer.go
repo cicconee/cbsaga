@@ -75,9 +75,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 			traceID = "local-trace-id-identity"
 		}
 
-		evt, ok := parseConnectEnvelope(m.Value)
-		if !ok || evt.WithdrawalID == "" || evt.UserID == "" {
-			// TODO: This should never be ignored. Must be made apparent the moment it happens.
+		identityPayload := identity.IdentityRequestPayload{}
+		err = messaging.DecodeConnectEnvelopeValid(m.Value, &identityPayload)
+		if err != nil {
+			// TODO: log and continue, remember decoding also validates.
 			continue
 		}
 
@@ -87,8 +88,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 		var reason *string
 
 		payload := map[string]any{
-			"withdrawal_id": evt.WithdrawalID,
-			"user_id":       evt.UserID,
+			"withdrawal_id": identityPayload.WithdrawalID,
+			"user_id":       identityPayload.UserID,
 		}
 		if reason != nil {
 			payload["reason"] = *reason
@@ -105,8 +106,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		if err := c.repo.VerifyAndEmitTx(ctx, tx, repo.VerifyAndEmitParams{
 			VerificationID:  verificationID,
-			WithdrawalID:    evt.WithdrawalID,
-			UserID:          evt.UserID,
+			WithdrawalID:    identityPayload.WithdrawalID,
+			UserID:          identityPayload.UserID,
 			Status:          status,
 			Reason:          reason,
 			OutboxEventType: outboxType,
@@ -114,7 +115,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			TraceID:         traceID,
 			RouteKey:        identity.RouteKeyIdentityEvt,
 		}); err != nil {
-			c.log.Error("VerifyAndEmitTx failed", "err", err, "withdrawal_id", evt.WithdrawalID)
+			c.log.Error("VerifyAndEmitTx failed", "err", err, "withdrawal_id", identityPayload.WithdrawalID)
 			return err
 		}
 
@@ -128,30 +129,10 @@ func (c *Consumer) Run(ctx context.Context) error {
 		}
 
 		c.log.Info("identity emitted decision",
-			"withdrawal_id", evt.WithdrawalID,
+			"withdrawal_id", identityPayload.WithdrawalID,
 			"decision", status,
 			"event_type", outboxType,
 			"trace_id", traceID,
 		)
 	}
-}
-
-func parseConnectEnvelope(b []byte) (WithdrawalRequested, bool) {
-	var env struct {
-		Payload json.RawMessage `json:"payload"`
-	}
-
-	if err := json.Unmarshal(b, &env); err == nil && len(env.Payload) > 0 {
-		var evt WithdrawalRequested
-		if err := json.Unmarshal(env.Payload, &evt); err == nil {
-			return evt, true
-		}
-	}
-
-	var evt WithdrawalRequested
-	if err := json.Unmarshal(b, &evt); err == nil {
-		return evt, true
-	}
-
-	return WithdrawalRequested{}, false
 }
