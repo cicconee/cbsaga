@@ -75,7 +75,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			traceID = "local-trace-id-identity"
 		}
 
-		identityPayload := identity.IdentityRequestPayload{}
+		identityPayload := identity.IdentityRequestCmdPayload{}
 		err = messaging.DecodeConnectEnvelopeValid(m.Value, &identityPayload)
 		if err != nil {
 			// TODO: log and continue, remember decoding also validates.

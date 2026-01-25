@@ -67,7 +67,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	withdrawalID := uuid.New().String()
 	sagaID := uuid.New().String()
 
-	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestPayload{
+	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
 		WithdrawalID: withdrawalID,
 		UserID:       userID,
 	})

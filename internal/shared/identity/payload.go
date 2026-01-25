@@ -2,12 +2,12 @@ package identity
 
 import "errors"
 
-type IdentityRequestPayload struct {
+type IdentityRequestCmdPayload struct {
 	WithdrawalID string `json:"withdrawal_id"`
 	UserID       string `json:"user_id"`
 }
 
-func (p *IdentityRequestPayload) Validate() error {
+func (p *IdentityRequestCmdPayload) Validate() error {
 	if p.WithdrawalID == "" {
 		return errors.New("withdrawal_id is empty")
 	}
