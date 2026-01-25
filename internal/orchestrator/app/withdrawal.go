@@ -4,13 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
@@ -67,6 +67,14 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	withdrawalID := uuid.New().String()
 	sagaID := uuid.New().String()
 
+	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestPayload{
+		WithdrawalID: withdrawalID,
+		UserID:       userID,
+	})
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
+
 	reserveTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateWithdrawalResult{}, err
@@ -115,12 +123,6 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		}
 	}
 
-	payload := map[string]any{
-		"withdrawal_id": withdrawalID,
-		"user_id":       userID,
-	}
-	payloadJSON, _ := json.Marshal(payload)
-
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		_ = s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, `{"error":"begin work tx failed"}`)
@@ -139,12 +141,12 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		OutboxEvents: []repo.OutboxEvent{
 			{
 				EventType: orchestrator.EventTypeWithdrawalRequested,
-				Payload:   string(payloadJSON),
+				Payload:   string(identityPayload),
 				RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
 			},
 			{
 				EventType: identity.EventTypeIdentityRequested,
-				Payload:   string(payloadJSON),
+				Payload:   string(identityPayload),
 				RouteKey:  identity.RouteKeyIdentityCmd,
 			},
 		},
@@ -159,7 +161,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		return CreateWithdrawalResult{}, err
 	}
 
-	if err := s.completeIdempotency(ctx, userID, idemKey, now, 0, string(payloadJSON)); err != nil {
+	if err := s.completeIdempotency(ctx, userID, idemKey, now, 0, string(identityPayload)); err != nil {
 		// TODO: Withdrawal is created, but idempotency still IN_PROGRESS. This must be fixed. No excuses.
 		return CreateWithdrawalResult{}, err
 	}
