@@ -75,6 +75,14 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		return CreateWithdrawalResult{}, err
 	}
 
+	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
+		WithdrawalID: withdrawalID,
+		UserID:       userID,
+	})
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
+
 	reserveTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CreateWithdrawalResult{}, err
@@ -141,7 +149,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		OutboxEvents: []repo.OutboxEvent{
 			{
 				EventType: orchestrator.EventTypeWithdrawalRequested,
-				Payload:   string(identityPayload),
+				Payload:   string(withdrawPayload),
 				RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
 			},
 			{
