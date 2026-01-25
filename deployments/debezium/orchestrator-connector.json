@@ -23,5 +23,5 @@
   "transforms.outbox.table.field.event.type": "event_type",
   "transforms.outbox.table.field.event.payload": "payload_json",
   "transforms.outbox.table.expand.json.payload": "true",
-  "transforms.outbox.table.fields.additional.placement": "trace_id:header,created_at:header"
+  "transforms.outbox.table.fields.additional.placement": "event_id:header,event_type:header,trace_id:header,aggregate_type:header,aggregate_id:header,created_at:header"
 }
