@@ -84,9 +84,10 @@ func (i *Identity) Run(ctx context.Context) error {
 			continue
 		}
 
-		evt, ok := parseConnectEnvelopeIdentity(m.Value)
-		if !ok || evt.WithdrawalID == "" || evt.UserID == "" {
-			// TODO: This should never be ignored. Must be made apparent the moment it happens.
+		identityEvtPayload := identity.IdentityRequestEvtPayload{}
+		err = messaging.DecodeConnectEnvelopeValid(m.Value, &identityEvtPayload)
+		if err != nil {
+			// TODO: log, remember that decode also validates the event.
 			continue
 		}
 
@@ -96,7 +97,9 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		row, err := i.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{WithdrawalID: evt.WithdrawalID})
+		row, err := i.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+			WithdrawalID: identityEvtPayload.WithdrawalID,
+		})
 		if err != nil {
 			return err
 		}
@@ -119,7 +122,7 @@ func (i *Identity) Run(ctx context.Context) error {
 		default:
 		}
 		payload := map[string]any{
-			"withdrawal_id":    evt.WithdrawalID,
+			"withdrawal_id":    identityEvtPayload.WithdrawalID,
 			"user_id":          row.UserID,
 			"asset":            row.Asset,
 			"amount_minor":     row.AmountMinor,
@@ -128,10 +131,10 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 		b, _ := json.Marshal(payload)
 		if err := i.repo.ApplyIdentityResultTx(ctx, tx, repo.ApplyIdentityResultParams{
-			WithdrawalID:      evt.WithdrawalID,
-			UserID:            evt.UserID,
+			WithdrawalID:      identityEvtPayload.WithdrawalID,
+			UserID:            identityEvtPayload.UserID,
 			IdentityEventType: eventType,
-			Reason:            evt.Reason,
+			Reason:            identityEvtPayload.Reason,
 			UpdatedAt:         time.Now().UTC(),
 			TraceID:           traceID,
 			OutboxEventType:   outboxEventType,
@@ -140,7 +143,7 @@ func (i *Identity) Run(ctx context.Context) error {
 		}); err != nil {
 			i.log.Error("ApplyIdentityResultTx failed",
 				"err", err,
-				"withdrawal_id", evt.WithdrawalID,
+				"withdrawal_id", identityEvtPayload.WithdrawalID,
 			)
 			return err
 		}
@@ -155,7 +158,7 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 
 		i.log.Info("identity result applied",
-			"withdrawal_id", evt.WithdrawalID,
+			"withdrawal_id", identityEvtPayload.WithdrawalID,
 			"event_type", eventType,
 			"trace_id", traceID,
 		)
