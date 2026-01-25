@@ -13,15 +13,15 @@ import (
 )
 
 type ApplyIdentityResultParams struct {
-	WithdrawalID    string
-	UserID          string
-	IdentityStatus  string // VERIFIED | REJECTED
-	Reason          *string
-	TraceID         string
-	UpdatedAt       time.Time
-	OutboxEventType string
-	OutboxPayload   string
-	RouteKey        string
+	WithdrawalID      string
+	UserID            string
+	IdentityEventType string // VERIFIED | REJECTED
+	Reason            *string
+	TraceID           string
+	UpdatedAt         time.Time
+	OutboxEventType   string
+	OutboxPayload     string
+	RouteKey          string
 }
 
 func (i *ApplyIdentityResultParams) validate() error {
@@ -31,9 +31,9 @@ func (i *ApplyIdentityResultParams) validate() error {
 	if i.UserID == "" {
 		return errors.New("identity event: missing user_id")
 	}
-	if i.IdentityStatus != identity.IdentityStatusVerified &&
-		i.IdentityStatus != identity.IdentityStatusRejected {
-		return fmt.Errorf("identity event: invalid status %q", i.IdentityStatus)
+	if i.IdentityEventType != identity.EventTypeIdentityVerified &&
+		i.IdentityEventType != identity.EventTypeIdentityRejected {
+		return fmt.Errorf("identity event: invalid status %q", i.IdentityEventType)
 	}
 	if i.TraceID == "" {
 		return errors.New("identity event: missing trace_id")
@@ -54,20 +54,20 @@ func (r *Repo) ApplyIdentityResultTx(ctx context.Context, tx pgx.Tx, p ApplyIden
 	_, err := tx.Exec(ctx, `
 		UPDATE orchestrator.withdrawals
 		SET status = CASE
-				WHEN $2 = 'VERIFIED' THEN 'IN_PROGRESS'
+				WHEN $2 = 'IdentityVerified' THEN 'IN_PROGRESS'
 				ELSE 'FAILED'
 			END,
 		    failure_reason = CASE
-				WHEN $2 = 'VERIFIED' THEN NULL
+				WHEN $2 = 'IdentityVerified' THEN NULL
 				ELSE COALESCE($3, 'identity rejected')
 			END,
 		    updated_at = $4
 		WHERE id = $1
 			AND (
-				($2 = 'VERIFIED' AND status = 'REQUESTED')
-				OR ($2 = 'REJECTED' AND status IN ('REQUESTED', 'IN_PROGRESS'))
+				($2 = 'IdentityVerified' AND status = 'REQUESTED')
+				OR ($2 = 'IdentityRejected' AND status IN ('REQUESTED', 'IN_PROGRESS'))
 			)
-	`, p.WithdrawalID, p.IdentityStatus, p.Reason, p.UpdatedAt)
+	`, p.WithdrawalID, p.IdentityEventType, p.Reason, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update withdrawals based on identity result: %w", err)
 	}
@@ -75,18 +75,18 @@ func (r *Repo) ApplyIdentityResultTx(ctx context.Context, tx pgx.Tx, p ApplyIden
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.saga_instances
 				SET current_step = CASE
-						WHEN $2 = 'VERIFIED' THEN 'RISK_CHECK'
+						WHEN $2 = 'IdentityVerified' THEN 'RISK_CHECK'
 						ELSE 'FAILED'
 					END,
 					state = CASE
-						WHEN $2 = 'VERIFIED' THEN 'IN_PROGRESS'
+						WHEN $2 = 'IdentityVerified' THEN 'IN_PROGRESS'
 						ELSE 'FAILED'
 					END,
 					updated_at = $3
 				WHERE withdrawal_id = $1
 					AND current_step = 'IDENTITY_CHECK'
 					AND state IN ('STARTED','IN_PROGRESS')
-	`, p.WithdrawalID, p.IdentityStatus, p.UpdatedAt)
+	`, p.WithdrawalID, p.IdentityEventType, p.UpdatedAt)
 	if err != nil {
 		return err
 	}

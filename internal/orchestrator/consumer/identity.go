@@ -49,7 +49,6 @@ func (i *Identity) Close() error {
 type IdentityResult struct {
 	WithdrawalID string  `json:"withdrawal_id"`
 	UserID       string  `json:"user_id"`
-	Status       string  `json:"status"` // VERIFIED | REJECTED
 	Reason       *string `json:"reason,omitempty"`
 }
 
@@ -70,6 +69,17 @@ func (i *Identity) Run(ctx context.Context) error {
 		if !ok || traceID == "" {
 			// TODO: This should never be ignored. This must be made apparent the moment it happens.
 			traceID = "local-trace-id-orchestrator"
+		}
+
+		eventType, ok := headerValue(m.Headers, "event_type")
+		if !ok || eventType == "" {
+			// TODO: Should log.
+			continue
+		}
+		if eventType != identity.EventTypeIdentityVerified &&
+			eventType != identity.EventTypeIdentityRejected {
+			// TODO: Should log.
+			continue
 		}
 
 		evt, ok := parseConnectEnvelopeIdentity(m.Value)
@@ -97,11 +107,11 @@ func (i *Identity) Run(ctx context.Context) error {
 		// is now in FAILED status
 		var outboxEventType string
 		var routeKey string
-		switch evt.Status {
-		case identity.IdentityStatusVerified:
+		switch eventType {
+		case identity.EventTypeIdentityVerified:
 			outboxEventType = risk.EventTypeRiskCheckRequested
 			routeKey = risk.RouteKeyRiskCmd
-		case identity.IdentityStatusRejected:
+		case identity.EventTypeIdentityRejected:
 			outboxEventType = orchestrator.EventTypeWithdrawalFailed
 			routeKey = orchestrator.RouteKeyWithdrawalEvt
 		default:
@@ -116,15 +126,15 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 		b, _ := json.Marshal(payload)
 		if err := i.repo.ApplyIdentityResultTx(ctx, tx, repo.ApplyIdentityResultParams{
-			WithdrawalID:    evt.WithdrawalID,
-			UserID:          evt.UserID,
-			IdentityStatus:  evt.Status,
-			Reason:          evt.Reason,
-			UpdatedAt:       time.Now().UTC(),
-			TraceID:         traceID,
-			OutboxEventType: outboxEventType,
-			OutboxPayload:   string(b),
-			RouteKey:        routeKey,
+			WithdrawalID:      evt.WithdrawalID,
+			UserID:            evt.UserID,
+			IdentityEventType: eventType,
+			Reason:            evt.Reason,
+			UpdatedAt:         time.Now().UTC(),
+			TraceID:           traceID,
+			OutboxEventType:   outboxEventType,
+			OutboxPayload:     string(b),
+			RouteKey:          routeKey,
 		}); err != nil {
 			i.log.Error("ApplyIdentityResultTx failed",
 				"err", err,
@@ -144,7 +154,7 @@ func (i *Identity) Run(ctx context.Context) error {
 
 		i.log.Info("identity result applied",
 			"withdrawal_id", evt.WithdrawalID,
-			"status", evt.Status,
+			"event_type", eventType,
 			"trace_id", traceID,
 		)
 	}
