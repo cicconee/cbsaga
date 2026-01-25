@@ -2,11 +2,11 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/identity/repo"
+	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/cicconee/cbsaga/internal/platform/messaging"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
@@ -87,14 +87,15 @@ func (c *Consumer) Run(ctx context.Context) error {
 		outboxType := identity.EventTypeIdentityVerified
 		var reason *string
 
-		payload := map[string]any{
-			"withdrawal_id": identityPayload.WithdrawalID,
-			"user_id":       identityPayload.UserID,
+		identityEvtPayload, err := codec.EncodeValid(&identity.IdentityRequestEvtPayload{
+			WithdrawalID: identityPayload.WithdrawalID,
+			UserID:       identityPayload.UserID,
+			Reason:       reason,
+		})
+		if err != nil {
+			// TODO: log and continue, remember encoding also validates.
+			continue
 		}
-		if reason != nil {
-			payload["reason"] = *reason
-		}
-		b, _ := json.Marshal(payload)
 
 		tx, err := c.db.BeginTx(ctx, pgx.TxOptions{})
 		if err != nil {
@@ -111,7 +112,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			Status:          status,
 			Reason:          reason,
 			OutboxEventType: outboxType,
-			OutboxPayload:   string(b),
+			OutboxPayload:   string(identityEvtPayload),
 			TraceID:         traceID,
 			RouteKey:        identity.RouteKeyIdentityEvt,
 		}); err != nil {
