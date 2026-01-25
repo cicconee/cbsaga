@@ -87,7 +87,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 		payload := map[string]any{
 			"withdrawal_id": evt.WithdrawalID,
 			"user_id":       evt.UserID,
-			"status":        status,
 		}
 		if reason != nil {
 			payload["reason"] = *reason
