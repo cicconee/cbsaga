@@ -2,11 +2,11 @@ package consumer
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/cicconee/cbsaga/internal/platform/messaging"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
@@ -121,15 +121,19 @@ func (i *Identity) Run(ctx context.Context) error {
 			routeKey = orchestrator.RouteKeyWithdrawalEvt
 		default:
 		}
-		payload := map[string]any{
-			"withdrawal_id":    identityEvtPayload.WithdrawalID,
-			"user_id":          row.UserID,
-			"asset":            row.Asset,
-			"amount_minor":     row.AmountMinor,
-			"destination_addr": row.DestinationAddr,
-			"requested_by":     "orchestrator",
+
+		riskPayload, err := codec.EncodeValid(&risk.RiskCheckRequestPayload{
+			WithdrawalID:    identityEvtPayload.WithdrawalID,
+			UserID:          row.UserID,
+			Asset:           row.Asset,
+			AmountMinor:     row.AmountMinor,
+			DestinationAddr: row.DestinationAddr,
+		})
+		if err != nil {
+			// TODO: log and continue.
+			continue
 		}
-		b, _ := json.Marshal(payload)
+
 		if err := i.repo.ApplyIdentityResultTx(ctx, tx, repo.ApplyIdentityResultParams{
 			WithdrawalID:      identityEvtPayload.WithdrawalID,
 			UserID:            identityEvtPayload.UserID,
@@ -138,7 +142,7 @@ func (i *Identity) Run(ctx context.Context) error {
 			UpdatedAt:         time.Now().UTC(),
 			TraceID:           traceID,
 			OutboxEventType:   outboxEventType,
-			OutboxPayload:     string(b),
+			OutboxPayload:     string(riskPayload),
 			RouteKey:          routeKey,
 		}); err != nil {
 			i.log.Error("ApplyIdentityResultTx failed",
@@ -163,33 +167,4 @@ func (i *Identity) Run(ctx context.Context) error {
 			"trace_id", traceID,
 		)
 	}
-}
-
-func parseConnectEnvelopeIdentity(b []byte) (IdentityResult, bool) {
-	var env struct {
-		Payload json.RawMessage `json:"payload"`
-	}
-
-	if err := json.Unmarshal(b, &env); err == nil && len(env.Payload) > 0 {
-		var evt IdentityResult
-		if err := json.Unmarshal(env.Payload, &evt); err == nil {
-			return evt, true
-		}
-	}
-
-	var evt IdentityResult
-	if err := json.Unmarshal(b, &evt); err == nil {
-		return evt, true
-	}
-
-	return IdentityResult{}, false
-}
-
-func headerValue(headers []kafka.Header, key string) (string, bool) {
-	for _, h := range headers {
-		if h.Key == key {
-			return string(h.Value), true
-		}
-	}
-	return "", false
 }
