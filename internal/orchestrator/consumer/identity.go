@@ -96,16 +96,13 @@ func (i *Identity) Run(ctx context.Context) error {
 		// identity = REJECTED -> WithdrawalFailed event_type to be passed to _ service. Aggregate (withdrawal)
 		// is now in FAILED status
 		var outboxEventType string
-		var status string
 		var routeKey string
 		switch evt.Status {
 		case identity.IdentityStatusVerified:
 			outboxEventType = risk.EventTypeRiskCheckRequested
-			status = orchestrator.WithdrawalStatusInProgress
 			routeKey = risk.RouteKeyRiskCmd
 		case identity.IdentityStatusRejected:
 			outboxEventType = orchestrator.EventTypeWithdrawalFailed
-			status = orchestrator.WithdrawalStatusFailed
 			routeKey = orchestrator.RouteKeyWithdrawalEvt
 		default:
 		}
@@ -115,7 +112,6 @@ func (i *Identity) Run(ctx context.Context) error {
 			"asset":            row.Asset,
 			"amount_minor":     row.AmountMinor,
 			"destination_addr": row.DestinationAddr,
-			"status":           status,
 			"requested_by":     "orchestrator",
 		}
 		b, _ := json.Marshal(payload)
