@@ -16,6 +16,8 @@ type ReserveIdempotencyParams struct {
 	IdempotencyKey string
 	RequestHash    string
 	WithdrawalID   string
+	LeaseAttemptID string
+	LeaseTTL       time.Duration
 	Now            time.Time
 }
 
@@ -26,6 +28,8 @@ type ReserveIdempotencyResult struct {
 	RequestHash      string
 	GRPCCode         int
 	ResponseBodyJSON string
+	LeaseOwner       string
+	LeaseExpiresAt   time.Time
 }
 
 func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIdempotencyParams) (ReserveIdempotencyResult, error) {
