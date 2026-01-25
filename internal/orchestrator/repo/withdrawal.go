@@ -36,7 +36,7 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 			(id, user_id, asset, amount_minor, destination_addr, status)
 		VALUES
 			($1, $2, $3, $4, $5, $6)
-	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr, orchestrator.WithdrawalStatusInProgress)
+	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr, orchestrator.WithdrawalStatusRequested)
 	if err != nil {
 		return CreateWithdrawalResult{}, err
 	}
