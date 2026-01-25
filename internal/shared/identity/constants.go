@@ -12,6 +12,7 @@ const (
 const (
 	EventTypeIdentityRequested = "VerifyIdentityRequested"
 	EventTypeIdentityVerified  = "IdentityVerified"
+	EventTypeIdentityRejected  = "IdentityRejected"
 )
 
 const (
