@@ -42,6 +42,6 @@ func (r *Repo) VerifyAndEmitTx(ctx context.Context, tx pgx.Tx, p VerifyAndEmitPa
 			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id, route_key)
 		VALUES
 			(gen_random_uuid(), 'identity', $1, $2, $3, $4, $5)
-	`, p.WithdrawalID, p.OutboxEventType, p.OutboxPayload, p.TraceID, p.RouteKey)
+	`, p.VerificationID, p.OutboxEventType, p.OutboxPayload, p.TraceID, p.RouteKey)
 	return err
 }
