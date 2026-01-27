@@ -15,7 +15,7 @@ var (
 	ErrLostLeaseOwnership  = errors.New("not the lease owner")
 )
 
-type ReserveIdempotencyParams struct {
+type ReserveIdemParams struct {
 	UserID         string
 	IdempotencyKey string
 	RequestHash    string
@@ -25,7 +25,7 @@ type ReserveIdempotencyParams struct {
 	Now            time.Time
 }
 
-type ReserveIdempotencyResult struct {
+type ReserveIdemResult struct {
 	Owned          bool
 	StoleOwnership bool
 	Status         string
@@ -37,7 +37,7 @@ type ReserveIdempotencyResult struct {
 	LeaseFence     int64
 }
 
-func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIdempotencyParams) (ReserveIdempotencyResult, error) {
+func (r *Repo) ReserveIdemTx(ctx context.Context, tx pgx.Tx, p ReserveIdemParams) (ReserveIdemResult, error) {
 	var inserted bool
 
 	err := tx.QueryRow(ctx, `
@@ -85,11 +85,11 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	).Scan(&inserted)
 
 	if err != nil && err != pgx.ErrNoRows {
-		return ReserveIdempotencyResult{}, err
+		return ReserveIdemResult{}, err
 	}
 
 	if inserted {
-		return ReserveIdempotencyResult{
+		return ReserveIdemResult{
 			Owned:          true,
 			Status:         orchestrator.IdemInProgress,
 			WithdrawalID:   p.WithdrawalID,
@@ -137,11 +137,11 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 		&leaseFence,
 	)
 	if err != nil {
-		return ReserveIdempotencyResult{}, err
+		return ReserveIdemResult{}, err
 	}
 
 	if requestHash != p.RequestHash {
-		return ReserveIdempotencyResult{}, ErrIdempotencyKeyReuse
+		return ReserveIdemResult{}, ErrIdempotencyKeyReuse
 	}
 
 	if status == orchestrator.IdemInProgress && !leaseExpiresAt.After(p.Now) {
@@ -182,7 +182,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 		)
 
 		if err == nil {
-			return ReserveIdempotencyResult{
+			return ReserveIdemResult{
 				Owned:          true,
 				StoleOwnership: true,
 				Status:         orchestrator.IdemInProgress,
@@ -194,12 +194,12 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 			}, nil
 		}
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return ReserveIdempotencyResult{}, err
+			return ReserveIdemResult{}, err
 		}
 		// If update didn't take effect (race), fall through.
 	}
 
-	return ReserveIdempotencyResult{
+	return ReserveIdemResult{
 		Owned:          false,
 		Status:         status,
 		WithdrawalID:   withdrawalID,
@@ -211,7 +211,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	}, nil
 }
 
-type FinalizeIdempotencyParams struct {
+type FinalizeIdemParams struct {
 	UserID         string
 	IdempotencyKey string
 	GRPCCode       int
@@ -261,7 +261,7 @@ func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey s
 	return s, nil
 }
 
-func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdempotencyParams) (FinalizeOutcome, error) {
+func (r *Repo) CompleteIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
 		SET
@@ -302,7 +302,7 @@ func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeI
 	return 0, ErrLostLeaseOwnership
 }
 
-func (r *Repo) FailIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdempotencyParams) (FinalizeOutcome, error) {
+func (r *Repo) FailIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
 		SET

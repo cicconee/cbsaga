@@ -134,7 +134,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	}
 	defer func() { _ = reserveTx.Rollback(ctx) }()
 
-	idemRow, err := s.repo.ReserveIdempotencyTx(ctx, reserveTx, repo.ReserveIdempotencyParams{
+	idemRow, err := s.repo.ReserveIdemTx(ctx, reserveTx, repo.ReserveIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 		RequestHash:    reqHash,
@@ -286,7 +286,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 }
 
 func (s *Service) completeIdempotency(ctx context.Context, workTx pgx.Tx, userID, idemKey string, now time.Time, grpcCode int, leaseAttemptID string, leaseFence int64) (repo.FinalizeOutcome, error) {
-	return s.repo.CompleteIdempotencyTx(ctx, workTx, repo.FinalizeIdempotencyParams{
+	return s.repo.CompleteIdemTx(ctx, workTx, repo.FinalizeIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 		GRPCCode:       grpcCode,
@@ -304,7 +304,7 @@ func (s *Service) failIdempotencyBestEffort(ctx context.Context, userID, idemKey
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	outcome, err := s.repo.FailIdempotencyTx(ctx, tx, repo.FinalizeIdempotencyParams{
+	outcome, err := s.repo.FailIdemTx(ctx, tx, repo.FinalizeIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 		GRPCCode:       grpcCode,
