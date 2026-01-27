@@ -34,7 +34,11 @@ type CreateWithdrawalResult struct {
 	Status       string
 }
 
-func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdrawalParams) (CreateWithdrawalResult, error) {
+func (r *Repo) CreateWithdrawalTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p CreateWithdrawalParams,
+) (CreateWithdrawalResult, error) {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO orchestrator.withdrawals (
 			id,
@@ -155,7 +159,11 @@ type GetWithdrawalResult struct {
 	UpdatedAt       time.Time
 }
 
-func (r *Repo) GetWithdrawalTx(ctx context.Context, tx pgx.Tx, p GetWithdrawalParams) (GetWithdrawalResult, error) {
+func (r *Repo) GetWithdrawalTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p GetWithdrawalParams,
+) (GetWithdrawalResult, error) {
 	var res GetWithdrawalResult
 	err := tx.QueryRow(ctx, `
 		SELECT
