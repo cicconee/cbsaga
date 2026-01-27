@@ -117,8 +117,6 @@ make demo
 
 To kill the run you can run `make stop`. Also, `make clean` will run the `stop` command followed by the removal of the `bin` and `.run` directories.
 
-**Note: Theres a connector issue with the timeouts and kafka/redpanda that I have not had time to dig deep into yet. If events stop making their way to identity service, run `make down-v`, which will destroy infrastructure and the volume associated with it. From there run a `make clean` and it will be like you are starting fresh. This shouldn't happen unless you leave it running for a long time or kill and restart many times.**
-
 ## Using the gRPC server
 
 Once you are up and running, you can play around sending in withdrawal requests to the gRPC server. I recommend playing around with different requests (unique requests, duplicate requests, different requests with same idempotency key, etc.).
