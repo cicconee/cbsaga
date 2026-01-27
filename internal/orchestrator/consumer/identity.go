@@ -24,7 +24,13 @@ type Identity struct {
 	r    *kafka.Reader
 }
 
-func NewIdentity(db *pgxpool.Pool, log *logging.Logger, brokers []string, groupID string, topic string) *Identity {
+func NewIdentity(
+	db *pgxpool.Pool,
+	log *logging.Logger,
+	brokers []string,
+	groupID string,
+	topic string,
+) *Identity {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
 		GroupID:     groupID,
@@ -105,11 +111,11 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 
 		// Build out next event payload.
-		// identity = VERIFIED -> RiskCheckCreated event_type to be passed to risk service. Aggregate (withdrawal)
-		// is now in IN_PROGRESS status
+		// identity = VERIFIED -> RiskCheckCreated event_type to be passed to risk service.
+		// Aggregate (withdrawal) is now in IN_PROGRESS status
 		//
-		// identity = REJECTED -> WithdrawalFailed event_type to be passed to _ service. Aggregate (withdrawal)
-		// is now in FAILED status
+		// identity = REJECTED -> WithdrawalFailed event_type to be passed to _ service. Aggregate
+		// (withdrawal) is now in FAILED status
 		var outboxEventType string
 		var routeKey string
 		switch eventType {

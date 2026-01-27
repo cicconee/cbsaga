@@ -82,7 +82,8 @@ func (c *Consumer) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Mocking identity verification for now. Maybe implement this or add some random REJECTED and delays?
+		// Mocking identity verification for now. Maybe implement this or add some random REJECTED
+		// and delays?
 		status := identity.IdentityStatusVerified
 		outboxType := identity.EventTypeIdentityVerified
 		var reason *string
@@ -116,7 +117,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 			TraceID:         traceID,
 			RouteKey:        identity.RouteKeyIdentityEvt,
 		}); err != nil {
-			c.log.Error("VerifyAndEmitTx failed", "err", err, "withdrawal_id", identityPayload.WithdrawalID)
+			c.log.Error(
+				"VerifyAndEmitTx failed",
+				"err",
+				err,
+				"withdrawal_id",
+				identityPayload.WithdrawalID,
+			)
 			return err
 		}
 

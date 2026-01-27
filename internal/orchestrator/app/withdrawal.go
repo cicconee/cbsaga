@@ -185,7 +185,10 @@ func (s *Service) CreateWithdrawal(
 			return CreateWithdrawalResult{}, fmt.Errorf("commit outcome unknown; please retry")
 		}
 
-		return CreateWithdrawalResult{}, fmt.Errorf("commit outcome unknown; reconcile failed: %v; please retry", rerr)
+		return CreateWithdrawalResult{}, fmt.Errorf(
+			"commit outcome unknown; reconcile failed: %v; please retry",
+			rerr,
+		)
 	}
 
 	return CreateWithdrawalResult{
@@ -259,10 +262,16 @@ func (s *Service) failIdempotencyBestEffort(
 	return outcome, nil
 }
 
-func (s *Service) reconcile(ctx context.Context, userID, idemKey string) (CreateWithdrawalResult, error) {
+func (s *Service) reconcile(
+	ctx context.Context,
+	userID, idemKey string,
+) (CreateWithdrawalResult, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return CreateWithdrawalResult{}, fmt.Errorf("internal error: could not open tx for reconciliation: %w", err)
+		return CreateWithdrawalResult{}, fmt.Errorf(
+			"internal error: could not open tx for reconciliation: %w",
+			err,
+		)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -298,7 +307,10 @@ func (s *Service) reconcile(ctx context.Context, userID, idemKey string) (Create
 		}, nil
 
 	case orchestrator.IdemFailed:
-		return CreateWithdrawalResult{}, fmt.Errorf("previous attempt failed (grpc_code=%d)", idemRow.GRPCCode)
+		return CreateWithdrawalResult{}, fmt.Errorf(
+			"previous attempt failed (grpc_code=%d)",
+			idemRow.GRPCCode,
+		)
 	case orchestrator.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
@@ -314,7 +326,10 @@ func (s *Service) reconcile(ctx context.Context, userID, idemKey string) (Create
 		}
 		return CreateWithdrawalResult{}, ErrIdempotencyInProgress
 	default:
-		return CreateWithdrawalResult{}, fmt.Errorf("unknown idempotency status: %s", idemRow.Status)
+		return CreateWithdrawalResult{}, fmt.Errorf(
+			"unknown idempotency status: %s",
+			idemRow.Status,
+		)
 	}
 }
 
@@ -334,14 +349,21 @@ type GetWithdrawalResult struct {
 	UpdatedAt       time.Time
 }
 
-func (s *Service) GetWithdrawal(ctx context.Context, p GetWithdrawalParams) (GetWithdrawalResult, error) {
+func (s *Service) GetWithdrawal(
+	ctx context.Context,
+	p GetWithdrawalParams,
+) (GetWithdrawalResult, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return GetWithdrawalResult{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	row, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{WithdrawalID: p.WithdrawalID})
+	row, err := s.repo.GetWithdrawalTx(
+		ctx,
+		tx,
+		repo.GetWithdrawalParams{WithdrawalID: p.WithdrawalID},
+	)
 	if err != nil {
 		return GetWithdrawalResult{}, err
 	}

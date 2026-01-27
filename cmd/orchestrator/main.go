@@ -40,7 +40,13 @@ func main() {
 	}
 	defer pool.Close()
 
-	idc := consumer.NewIdentity(pool, log, cfg.KafkaBrokers, cfg.OrchestratorGroupID, cfg.IdentityEvtTopic)
+	idc := consumer.NewIdentity(
+		pool,
+		log,
+		cfg.KafkaBrokers,
+		cfg.OrchestratorGroupID,
+		cfg.IdentityEvtTopic,
+	)
 	defer func() { _ = idc.Close() }()
 
 	go func() {

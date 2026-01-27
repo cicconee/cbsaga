@@ -46,7 +46,11 @@ func (i *ApplyIdentityResultParams) validate() error {
 	return nil
 }
 
-func (r *Repo) ApplyIdentityResultTx(ctx context.Context, tx pgx.Tx, p ApplyIdentityResultParams) error {
+func (r *Repo) ApplyIdentityResultTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p ApplyIdentityResultParams,
+) error {
 	if err := p.validate(); err != nil {
 		return err
 	}
@@ -92,8 +96,8 @@ func (r *Repo) ApplyIdentityResultTx(ctx context.Context, tx pgx.Tx, p ApplyIden
 	}
 	if tag.RowsAffected() != 1 {
 		// Already processed. Treat as a no-op.
-		// TODO: Possibly early if for some reason saga still hasn't updated from initiating the withdrawal
-		// from the gRPC request. Maybe use inbox pattern and drain if delivered early?
+		// TODO: Possibly early if for some reason saga still hasn't updated from initiating the
+		// withdrawal from the gRPC request. Maybe use inbox pattern and drain if delivered early?
 		return nil
 	}
 

@@ -19,11 +19,16 @@ type OrchestratorConfig struct {
 
 func Load() (OrchestratorConfig, error) {
 	cfg := OrchestratorConfig{
-		Env:                 config.GetEnv("CBSAGA_ENV", "dev"),
-		GRPCAddr:            config.GetEnv("CBSAGA_ORCH_GRPC_ADDR", ":9000"),
-		ShutdownTimeout:     config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
-		PostgresDSN:         config.GetEnv("CBSAGA_ORCH_POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/orchestrator?sslmode=disable"),
-		KafkaBrokers:        config.SplitCSV(config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092")),
+		Env:             config.GetEnv("CBSAGA_ENV", "dev"),
+		GRPCAddr:        config.GetEnv("CBSAGA_ORCH_GRPC_ADDR", ":9000"),
+		ShutdownTimeout: config.GetEnvDuration("CBSAGA_SHUTDOWN_TIMEOUT", 10*time.Second),
+		PostgresDSN: config.GetEnv(
+			"CBSAGA_ORCH_POSTGRES_DSN",
+			"postgres://postgres:postgres@localhost:5432/orchestrator?sslmode=disable",
+		),
+		KafkaBrokers: config.SplitCSV(
+			config.GetEnv("CBSAGA_KAFKA_BROKERS", "localhost:9092"),
+		),
 		IdentityEvtTopic:    config.GetEnv("CBSAGA_ORCH_IDENTITY_TOPIC", "cbsaga.evt.identity"),
 		OrchestratorGroupID: config.GetEnv("CBSAGA_ORCH_GROUP_ID", "cbsaga-orchestrator"),
 	}

@@ -36,7 +36,13 @@ func main() {
 	}
 	defer pool.Close()
 
-	c := consumer.New(pool, log, cfg.KafkaBrokers, cfg.IdentityConsumerGroupID, cfg.IdentityCmdTopic)
+	c := consumer.New(
+		pool,
+		log,
+		cfg.KafkaBrokers,
+		cfg.IdentityConsumerGroupID,
+		cfg.IdentityCmdTopic,
+	)
 	defer func() { _ = c.Close() }()
 
 	log.Info("identity-svc running",

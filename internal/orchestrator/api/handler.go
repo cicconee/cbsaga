@@ -23,7 +23,10 @@ func NewHandler(svc *app.Service, log *logging.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-func (h *Handler) CreateWithdrawal(ctx context.Context, req *orchestratorv1.CreateWithdrawalRequest) (*orchestratorv1.CreateWithdrawalResponse, error) {
+func (h *Handler) CreateWithdrawal(
+	ctx context.Context,
+	req *orchestratorv1.CreateWithdrawalRequest,
+) (*orchestratorv1.CreateWithdrawalResponse, error) {
 	h.log.Info("CreateWithdrawal called",
 		"user_id", req.GetUserId(),
 		"asset", req.GetAsset(),
@@ -43,11 +46,17 @@ func (h *Handler) CreateWithdrawal(ctx context.Context, req *orchestratorv1.Crea
 		switch {
 		case errors.Is(err, app.ErrInvalidIdempotencyKeyReuse):
 			h.log.Error("CreateWithdrawal failed: idempotency key reuse", "err", err)
-			return nil, status.Error(codes.FailedPrecondition, "idempotency_key already used for a different request")
+			return nil, status.Error(
+				codes.FailedPrecondition,
+				"idempotency_key already used for a different request",
+			)
 
 		case errors.Is(err, app.ErrIdempotencyInProgress):
 			h.log.Info("CreateWithdrawal in progress replay", "withdrawal_id", res.WithdrawalID)
-			return nil, status.Error(codes.Aborted, "request in progress; retry later; withdrawal_id="+res.WithdrawalID)
+			return nil, status.Error(
+				codes.Aborted,
+				"request in progress; retry later; withdrawal_id="+res.WithdrawalID,
+			)
 
 		default:
 			h.log.Error("CreateWithdrawal failed", "err", err)
@@ -66,7 +75,10 @@ func (h *Handler) CreateWithdrawal(ctx context.Context, req *orchestratorv1.Crea
 	}, nil
 }
 
-func (h *Handler) GetWithdrawal(ctx context.Context, req *orchestratorv1.GetWithdrawalRequest) (*orchestratorv1.GetWithdrawalResponse, error) {
+func (h *Handler) GetWithdrawal(
+	ctx context.Context,
+	req *orchestratorv1.GetWithdrawalRequest,
+) (*orchestratorv1.GetWithdrawalResponse, error) {
 	h.log.Info("GetWithdrawal called", "withdrawal_id", req.GetWithdrawalId())
 
 	res, err := h.svc.GetWithdrawal(ctx, app.GetWithdrawalParams{
