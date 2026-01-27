@@ -266,16 +266,7 @@ func (s *Service) reconcile(
 	ctx context.Context,
 	userID, idemKey string,
 ) (CreateWithdrawalResult, error) {
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return CreateWithdrawalResult{}, fmt.Errorf(
-			"internal error: could not open tx for reconciliation: %w",
-			err,
-		)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	idemRow, err := s.repo.GetIdemTx(ctx, tx, repo.GetIdemParams{
+	idemRow, err := s.repo.GetIdem(ctx, s.db, repo.GetIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 	})
@@ -289,7 +280,7 @@ func (s *Service) reconcile(
 	switch idemRow.Status {
 
 	case orchestrator.IdemCompleted:
-		w, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+		w, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil {
@@ -312,7 +303,7 @@ func (s *Service) reconcile(
 			idemRow.GRPCCode,
 		)
 	case orchestrator.IdemInProgress:
-		existingWithdrawal, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -353,21 +344,12 @@ func (s *Service) GetWithdrawal(
 	ctx context.Context,
 	p GetWithdrawalParams,
 ) (GetWithdrawalResult, error) {
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return GetWithdrawalResult{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	row, err := s.repo.GetWithdrawalTx(
+	row, err := s.repo.GetWithdrawal(
 		ctx,
-		tx,
+		s.db,
 		repo.GetWithdrawalParams{WithdrawalID: p.WithdrawalID},
 	)
 	if err != nil {
-		return GetWithdrawalResult{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return GetWithdrawalResult{}, err
 	}
 

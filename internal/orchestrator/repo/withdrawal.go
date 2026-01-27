@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
@@ -159,13 +160,13 @@ type GetWithdrawalResult struct {
 	UpdatedAt       time.Time
 }
 
-func (r *Repo) GetWithdrawalTx(
+func (r *Repo) GetWithdrawal(
 	ctx context.Context,
-	tx pgx.Tx,
+	db postgres.DBTX,
 	p GetWithdrawalParams,
 ) (GetWithdrawalResult, error) {
 	var res GetWithdrawalResult
-	err := tx.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT
 			id,
 			user_id,

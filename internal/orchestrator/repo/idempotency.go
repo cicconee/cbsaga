@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
@@ -229,10 +230,14 @@ type GetIdemResult struct {
 	LeaseExpiresAt time.Time
 }
 
-func (r *Repo) GetIdemTx(ctx context.Context, tx pgx.Tx, p GetIdemParams) (GetIdemResult, error) {
+func (r *Repo) GetIdem(
+	ctx context.Context,
+	db postgres.DBTX,
+	p GetIdemParams,
+) (GetIdemResult, error) {
 	row := GetIdemResult{}
 
-	err := tx.QueryRow(ctx, `
+	err := db.QueryRow(ctx, `
 		SELECT
 			status,
 			withdrawal_id,

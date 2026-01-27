@@ -103,7 +103,7 @@ func (i *Identity) Run(ctx context.Context) error {
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		row, err := i.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+		row, err := i.repo.GetWithdrawal(ctx, tx, repo.GetWithdrawalParams{
 			WithdrawalID: identityEvtPayload.WithdrawalID,
 		})
 		if err != nil {
