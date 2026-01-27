@@ -2,11 +2,15 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
 )
+
+var ErrWithdrawalAlreadyExists = errors.New("withdrawal already exists")
 
 type OutboxEvent struct {
 	EventType string
@@ -38,6 +42,9 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 			($1, $2, $3, $4, $5, $6)
 	`, p.WithdrawalID, p.UserID, p.Asset, p.AmountMinor, p.DestinationAddr, orchestrator.WithdrawalStatusRequested)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return CreateWithdrawalResult{}, ErrWithdrawalAlreadyExists
+		}
 		return CreateWithdrawalResult{}, err
 	}
 
@@ -74,6 +81,14 @@ func (r *Repo) CreateWithdrawalTx(ctx context.Context, tx pgx.Tx, p CreateWithdr
 		WithdrawalID: p.WithdrawalID,
 		Status:       orchestrator.WithdrawalStatusRequested,
 	}, nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
 }
 
 type GetWithdrawalParams struct {
