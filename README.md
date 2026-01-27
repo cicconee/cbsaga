@@ -138,7 +138,7 @@ Reflection is enabled for this demo environment. But if you decide to disable it
 ```zsh
 grpcurl -plaintext \
   -import-path ./proto \
-  -proto cbsaga/orchestrator/v1/orchestrator.proto \
+  -proto orchestrator/v1/orchestrator.proto \
   -d '{
     "user_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     "asset":"ASSET",
