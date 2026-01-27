@@ -71,65 +71,6 @@ func (s *Service) CreateWithdrawal(
 	withdrawalID := uuid.New().String()
 	sagaID := uuid.New().String()
 
-	reconcileState := func(ctx context.Context, userID, idemKey string) (CreateWithdrawalResult, error) {
-		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
-		if err != nil {
-			return CreateWithdrawalResult{}, fmt.Errorf("internal error: could not open tx for reconciliation: %w", err)
-		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		idemRow, err := s.repo.GetIdemTx(ctx, tx, repo.GetIdemParams{
-			UserID:         userID,
-			IdempotencyKey: idemKey,
-		})
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CreateWithdrawalResult{}, ErrIdempotencyInProgress
-			}
-			return CreateWithdrawalResult{}, err
-		}
-
-		switch idemRow.Status {
-
-		case orchestrator.IdemCompleted:
-			w, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
-				WithdrawalID: idemRow.WithdrawalID,
-			})
-			if err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return CreateWithdrawalResult{}, fmt.Errorf(
-						"invariant violated: idempotency COMPLETED but withdrawal missing (withdrawal_id=%s)",
-						idemRow.WithdrawalID,
-					)
-				}
-				return CreateWithdrawalResult{}, err
-			}
-			return CreateWithdrawalResult{
-				WithdrawalID: w.WithdrawalID,
-				Status:       orchestrator.WithdrawalStatusRequested,
-			}, nil
-
-		case orchestrator.IdemFailed:
-			return CreateWithdrawalResult{}, fmt.Errorf("previous attempt failed (grpc_code=%d)", idemRow.GRPCCode)
-		case orchestrator.IdemInProgress:
-			existingWithdrawal, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
-				WithdrawalID: idemRow.WithdrawalID,
-			})
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return CreateWithdrawalResult{}, err
-			}
-			if err == nil {
-				return CreateWithdrawalResult{
-					WithdrawalID: existingWithdrawal.WithdrawalID,
-					Status:       orchestrator.WithdrawalStatusRequested,
-				}, nil
-			}
-			return CreateWithdrawalResult{}, ErrIdempotencyInProgress
-		default:
-			return CreateWithdrawalResult{}, fmt.Errorf("unknown idempotency status: %s", idemRow.Status)
-		}
-	}
-
 	// Reserve the idempotency key
 	reserveTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -153,13 +94,13 @@ func (s *Service) CreateWithdrawal(
 		return CreateWithdrawalResult{}, err
 	}
 	if err := reserveTx.Commit(ctx); err != nil {
-		return reconcileState(ctx, userID, idemKey)
+		return s.reconcile(ctx, userID, idemKey)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
 	// but current run does not own it.
 	if !idemRow.Owned {
-		return reconcileState(ctx, userID, idemKey)
+		return s.reconcile(ctx, userID, idemKey)
 	}
 
 	// begin tx that will create the withdrawal.
@@ -178,7 +119,7 @@ func (s *Service) CreateWithdrawal(
 
 		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
@@ -194,7 +135,7 @@ func (s *Service) CreateWithdrawal(
 
 		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
@@ -207,7 +148,7 @@ func (s *Service) CreateWithdrawal(
 
 		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
@@ -238,12 +179,12 @@ func (s *Service) CreateWithdrawal(
 
 		// If withdrawal already exists some how, reconcile, do not mark as failure.
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 
 		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
@@ -254,13 +195,13 @@ func (s *Service) CreateWithdrawal(
 		_ = workTx.Rollback(ctx)
 
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 
 		// We owned it, but couldn't finalize, therefore its a failed request.
 		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return reconcileState(ctx, userID, idemKey)
+			return s.reconcile(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
@@ -269,7 +210,7 @@ func (s *Service) CreateWithdrawal(
 	// another run gained ownership of the lease and already finalized the withdrawal request.
 	if outcome == repo.FinalizeAlreadyFinalized {
 		_ = workTx.Rollback(ctx)
-		return reconcileState(ctx, userID, idemKey)
+		return s.reconcile(ctx, userID, idemKey)
 	}
 
 	// Commit the atomic transaction: finalizes idempotency key status and inserts withdrawal.
@@ -278,7 +219,7 @@ func (s *Service) CreateWithdrawal(
 		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		res, rerr := reconcileState(rctx, userID, idemKey)
+		res, rerr := s.reconcile(rctx, userID, idemKey)
 		if rerr == nil {
 			return res, nil
 		}
@@ -347,6 +288,65 @@ func (s *Service) failIdempotencyBestEffort(
 		return 0, err
 	}
 	return outcome, nil
+}
+
+func (s *Service) reconcile(ctx context.Context, userID, idemKey string) (CreateWithdrawalResult, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return CreateWithdrawalResult{}, fmt.Errorf("internal error: could not open tx for reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	idemRow, err := s.repo.GetIdemTx(ctx, tx, repo.GetIdemParams{
+		UserID:         userID,
+		IdempotencyKey: idemKey,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreateWithdrawalResult{}, ErrIdempotencyInProgress
+		}
+		return CreateWithdrawalResult{}, err
+	}
+
+	switch idemRow.Status {
+
+	case orchestrator.IdemCompleted:
+		w, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+			WithdrawalID: idemRow.WithdrawalID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return CreateWithdrawalResult{}, fmt.Errorf(
+					"invariant violated: idempotency COMPLETED but withdrawal missing (withdrawal_id=%s)",
+					idemRow.WithdrawalID,
+				)
+			}
+			return CreateWithdrawalResult{}, err
+		}
+		return CreateWithdrawalResult{
+			WithdrawalID: w.WithdrawalID,
+			Status:       orchestrator.WithdrawalStatusRequested,
+		}, nil
+
+	case orchestrator.IdemFailed:
+		return CreateWithdrawalResult{}, fmt.Errorf("previous attempt failed (grpc_code=%d)", idemRow.GRPCCode)
+	case orchestrator.IdemInProgress:
+		existingWithdrawal, err := s.repo.GetWithdrawalTx(ctx, tx, repo.GetWithdrawalParams{
+			WithdrawalID: idemRow.WithdrawalID,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return CreateWithdrawalResult{}, err
+		}
+		if err == nil {
+			return CreateWithdrawalResult{
+				WithdrawalID: existingWithdrawal.WithdrawalID,
+				Status:       orchestrator.WithdrawalStatusRequested,
+			}, nil
+		}
+		return CreateWithdrawalResult{}, ErrIdempotencyInProgress
+	default:
+		return CreateWithdrawalResult{}, fmt.Errorf("unknown idempotency status: %s", idemRow.Status)
+	}
 }
 
 type GetWithdrawalParams struct {
