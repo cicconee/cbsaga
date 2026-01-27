@@ -57,40 +57,53 @@ func (r *Repo) ApplyIdentityResultTx(
 
 	_, err := tx.Exec(ctx, `
 		UPDATE orchestrator.withdrawals
-		SET status = CASE
+		SET
+			status = CASE
 				WHEN $2 = 'IdentityVerified' THEN 'IN_PROGRESS'
 				ELSE 'FAILED'
 			END,
-		    failure_reason = CASE
+			failure_reason = CASE
 				WHEN $2 = 'IdentityVerified' THEN NULL
 				ELSE COALESCE($3, 'identity rejected')
 			END,
-		    updated_at = $4
-		WHERE id = $1
+			updated_at = $4
+		WHERE
+			id = $1
 			AND (
 				($2 = 'IdentityVerified' AND status = 'REQUESTED')
 				OR ($2 = 'IdentityRejected' AND status IN ('REQUESTED', 'IN_PROGRESS'))
 			)
-	`, p.WithdrawalID, p.IdentityEventType, p.Reason, p.UpdatedAt)
+	`,
+		p.WithdrawalID,
+		p.IdentityEventType,
+		p.Reason,
+		p.UpdatedAt,
+	)
 	if err != nil {
 		return fmt.Errorf("update withdrawals based on identity result: %w", err)
 	}
 
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.saga_instances
-				SET current_step = CASE
-						WHEN $2 = 'IdentityVerified' THEN 'RISK_CHECK'
-						ELSE 'FAILED'
-					END,
-					state = CASE
-						WHEN $2 = 'IdentityVerified' THEN 'IN_PROGRESS'
-						ELSE 'FAILED'
-					END,
-					updated_at = $3
-				WHERE withdrawal_id = $1
-					AND current_step = 'IDENTITY_CHECK'
-					AND state IN ('STARTED','IN_PROGRESS')
-	`, p.WithdrawalID, p.IdentityEventType, p.UpdatedAt)
+		SET
+			current_step = CASE
+				WHEN $2 = 'IdentityVerified' THEN 'RISK_CHECK'
+				ELSE 'FAILED'
+			END,
+			state = CASE
+				WHEN $2 = 'IdentityVerified' THEN 'IN_PROGRESS'
+				ELSE 'FAILED'
+			END,
+			updated_at = $3
+		WHERE
+			withdrawal_id = $1
+			AND current_step = 'IDENTITY_CHECK'
+			AND state IN ('STARTED','IN_PROGRESS')
+	`,
+		p.WithdrawalID,
+		p.IdentityEventType,
+		p.UpdatedAt,
+	)
 	if err != nil {
 		return err
 	}
@@ -102,10 +115,24 @@ func (r *Repo) ApplyIdentityResultTx(
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO orchestrator.outbox_events
-			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id, route_key)
-		VALUES
-			(gen_random_uuid(), $1, $2, $3, $4, $5, $6)
+		INSERT INTO orchestrator.outbox_events (
+			event_id,
+			aggregate_type,
+			aggregate_id,
+			event_type,
+			payload_json,
+			trace_id,
+			route_key
+		)
+		VALUES (
+			gen_random_uuid(),
+			$1,
+			$2,
+			$3,
+			$4,
+			$5,
+			$6
+		)
 	`,
 		orchestrator.AggregateTypeWithdrawal,
 		p.WithdrawalID,
