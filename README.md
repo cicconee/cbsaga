@@ -119,6 +119,8 @@ To kill the run you can run `make stop`. Also, `make clean` will run the `stop` 
 
 ## Using the gRPC server
 
+### Create Withdrawal
+
 Once you are up and running, you can play around sending in withdrawal requests to the gRPC server. I recommend playing around with different requests (unique requests, duplicate requests, different requests with same idempotency key, etc.).
 
 ```zsh
@@ -149,6 +151,16 @@ grpcurl -plaintext \
 
 **Note: You can view the RedPanda console at `http://localhost:8080`.**
 
+### Get Withdrawal 
+
+Using the `withdrawalId` field returned by `CreateWithdrawal`, you can query the `GetWithdrawal` endpoint to see the status.
+
+```zsh
+grpcurl -plaintext -d '{
+  "withdrawal_id":"WITHDRAWAL_ID"
+}' localhost:9000 cbsaga.orchestrator.v1.OrchestratorService/GetWithdrawal
+
+```
 ## Developer Guide
 
 This section holds helpful commands when developing in this repo.
