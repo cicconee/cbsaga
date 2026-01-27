@@ -2,11 +2,8 @@ package app
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
@@ -50,24 +47,12 @@ func (s *Service) CreateWithdrawal(
 ) (CreateWithdrawalResult, error) {
 	now := time.Now().UTC()
 
-	userID := strings.TrimSpace(p.UserID)
-	asset := strings.ToUpper(strings.TrimSpace(p.Asset))
-	dest := strings.TrimSpace(p.DestinationAddr)
-	idemKey := strings.TrimSpace(p.IdempotencyKey)
+	v, err := NewValidatedCreateWithdrawal(p)
+	if err != nil {
+		return CreateWithdrawalResult{}, err
+	}
 
 	leaseAttemptID := uuid.New().String()
-	if userID == "" || asset == "" || dest == "" || idemKey == "" {
-		return CreateWithdrawalResult{}, fmt.Errorf("invalid input: missing required fields")
-	}
-	if p.AmountMinor <= 0 {
-		return CreateWithdrawalResult{}, fmt.Errorf("invalid input: amount_minor must be > 0")
-	}
-
-	canonical := fmt.Sprintf("user_id=%s|asset=%s|amount_minor=%d|destination_addr=%s",
-		userID, asset, p.AmountMinor, dest)
-	sum := sha256.Sum256([]byte(canonical))
-	reqHash := hex.EncodeToString(sum[:])
-
 	withdrawalID := uuid.New().String()
 	sagaID := uuid.New().String()
 
@@ -79,9 +64,9 @@ func (s *Service) CreateWithdrawal(
 	defer func() { _ = reserveTx.Rollback(ctx) }()
 
 	idemRow, err := s.repo.ReserveIdemTx(ctx, reserveTx, repo.ReserveIdemParams{
-		UserID:         userID,
-		IdempotencyKey: idemKey,
-		RequestHash:    reqHash,
+		UserID:         v.UserID,
+		IdempotencyKey: v.IdempotencyKey,
+		RequestHash:    v.RequestHash,
 		WithdrawalID:   withdrawalID,
 		LeaseAttemptID: leaseAttemptID,
 		LeaseTTL:       30 * time.Second,
@@ -94,21 +79,21 @@ func (s *Service) CreateWithdrawal(
 		return CreateWithdrawalResult{}, err
 	}
 	if err := reserveTx.Commit(ctx); err != nil {
-		return s.reconcile(ctx, userID, idemKey)
+		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
 	// but current run does not own it.
 	if !idemRow.Owned {
-		return s.reconcile(ctx, userID, idemKey)
+		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
 	// begin tx that will create the withdrawal.
 	withdrawalID = idemRow.WithdrawalID
 	leaseFence := idemRow.LeaseFence
 	finalParams := finalizeIdemParams{
-		userID:         userID,
-		idemKey:        idemKey,
+		userID:         v.UserID,
+		idemKey:        v.IdempotencyKey,
 		now:            now,
 		leaseAttemptID: leaseAttemptID,
 		leaseFence:     leaseFence,
@@ -123,7 +108,7 @@ func (s *Service) CreateWithdrawal(
 	// Encode payloads for the outbox_events tables.
 	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
 		WithdrawalID: withdrawalID,
-		UserID:       userID,
+		UserID:       v.UserID,
 	})
 	if err != nil {
 		_ = workTx.Rollback(ctx)
@@ -131,7 +116,7 @@ func (s *Service) CreateWithdrawal(
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: withdrawalID,
-		UserID:       userID,
+		UserID:       v.UserID,
 	})
 	if err != nil {
 		_ = workTx.Rollback(ctx)
@@ -141,10 +126,10 @@ func (s *Service) CreateWithdrawal(
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
 		WithdrawalID:    withdrawalID,
 		SagaID:          sagaID,
-		UserID:          userID,
-		Asset:           asset,
+		UserID:          v.UserID,
+		Asset:           v.Asset,
 		AmountMinor:     p.AmountMinor,
-		DestinationAddr: dest,
+		DestinationAddr: v.DestinationAddr,
 		TraceID:         p.TraceID,
 		OutboxEvents: []repo.OutboxEvent{
 			{
@@ -163,7 +148,7 @@ func (s *Service) CreateWithdrawal(
 		_ = workTx.Rollback(ctx)
 		// If withdrawal already exists some how, reconcile, do not mark as failure.
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
-			return s.reconcile(ctx, userID, idemKey)
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
 		return s.failAndReconcile(ctx, 13, finalParams)
 	}
@@ -173,7 +158,7 @@ func (s *Service) CreateWithdrawal(
 	if err != nil {
 		_ = workTx.Rollback(ctx)
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
-			return s.reconcile(ctx, userID, idemKey)
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
 		return s.failAndReconcile(ctx, 13, finalParams)
 	}
@@ -182,7 +167,7 @@ func (s *Service) CreateWithdrawal(
 	// another run gained ownership of the lease and already finalized the withdrawal request.
 	if outcome == repo.FinalizeAlreadyFinalized {
 		_ = workTx.Rollback(ctx)
-		return s.reconcile(ctx, userID, idemKey)
+		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
 	// Commit the atomic transaction: finalizes idempotency key status and inserts withdrawal.
@@ -191,7 +176,7 @@ func (s *Service) CreateWithdrawal(
 		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		res, rerr := s.reconcile(rctx, userID, idemKey)
+		res, rerr := s.reconcile(rctx, v.UserID, v.IdempotencyKey)
 		if rerr == nil {
 			return res, nil
 		}
