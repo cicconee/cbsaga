@@ -211,21 +211,52 @@ func (r *Repo) ReserveIdemTx(ctx context.Context, tx pgx.Tx, p ReserveIdemParams
 	}, nil
 }
 
-type FinalizeIdemParams struct {
+type GetIdemParams struct {
 	UserID         string
 	IdempotencyKey string
-	GRPCCode       int
-	Now            time.Time
-	LeaseAttemptID string
-	LeaseFence     int64
 }
 
-type FinalizeOutcome int
+type GetIdemResult struct {
+	Status         string
+	WithdrawalID   string
+	RequestHash    string
+	GRPCCode       int
+	LeaseOwner     string
+	LeaseExpiresAt time.Time
+}
 
-const (
-	FinalizeApplied          FinalizeOutcome = iota // tx applied the status change
-	FinalizeAlreadyFinalized                        // tx found the status change already existed
-)
+func (r *Repo) GetIdemTx(ctx context.Context, tx pgx.Tx, p GetIdemParams) (GetIdemResult, error) {
+	row := GetIdemResult{}
+
+	err := tx.QueryRow(ctx, `
+		SELECT
+			status,
+			withdrawal_id,
+			request_hash,
+			grpc_code,
+			lease_owner,
+			lease_expires_at
+		FROM orchestrator.idempotency_keys
+		WHERE
+			user_id = $1
+			AND idempotency_key = $2
+	`,
+		p.UserID,
+		p.IdempotencyKey,
+	).Scan(
+		&row.Status,
+		&row.WithdrawalID,
+		&row.RequestHash,
+		&row.GRPCCode,
+		&row.LeaseOwner,
+		&row.LeaseExpiresAt,
+	)
+	if err != nil {
+		return GetIdemResult{}, fmt.Errorf("repo.GetIdempotency: %w", err)
+	}
+
+	return row, nil
+}
 
 type IdemState struct {
 	Status         string
@@ -260,6 +291,22 @@ func (r *Repo) ReadIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey s
 	}
 	return s, nil
 }
+
+type FinalizeIdemParams struct {
+	UserID         string
+	IdempotencyKey string
+	GRPCCode       int
+	Now            time.Time
+	LeaseAttemptID string
+	LeaseFence     int64
+}
+
+type FinalizeOutcome int
+
+const (
+	FinalizeApplied          FinalizeOutcome = iota // tx applied the status change
+	FinalizeAlreadyFinalized                        // tx found the status change already existed
+)
 
 func (r *Repo) CompleteIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
@@ -340,51 +387,4 @@ func (r *Repo) FailIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) 
 		return FinalizeAlreadyFinalized, nil
 	}
 	return 0, ErrLostLeaseOwnership
-}
-
-type GetIdemParams struct {
-	UserID         string
-	IdempotencyKey string
-}
-
-type GetIdemResult struct {
-	Status         string
-	WithdrawalID   string
-	RequestHash    string
-	GRPCCode       int
-	LeaseOwner     string
-	LeaseExpiresAt time.Time
-}
-
-func (r *Repo) GetIdemTx(ctx context.Context, tx pgx.Tx, p GetIdemParams) (GetIdemResult, error) {
-	row := GetIdemResult{}
-
-	err := tx.QueryRow(ctx, `
-		SELECT
-			status,
-			withdrawal_id,
-			request_hash,
-			grpc_code,
-			lease_owner,
-			lease_expires_at
-		FROM orchestrator.idempotency_keys
-		WHERE
-			user_id = $1
-			AND idempotency_key = $2
-	`,
-		p.UserID,
-		p.IdempotencyKey,
-	).Scan(
-		&row.Status,
-		&row.WithdrawalID,
-		&row.RequestHash,
-		&row.GRPCCode,
-		&row.LeaseOwner,
-		&row.LeaseExpiresAt,
-	)
-	if err != nil {
-		return GetIdemResult{}, fmt.Errorf("repo.GetIdempotency: %w", err)
-	}
-
-	return row, nil
 }
