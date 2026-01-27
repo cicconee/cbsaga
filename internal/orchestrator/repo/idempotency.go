@@ -37,7 +37,11 @@ type ReserveIdemResult struct {
 	LeaseFence     int64
 }
 
-func (r *Repo) ReserveIdemTx(ctx context.Context, tx pgx.Tx, p ReserveIdemParams) (ReserveIdemResult, error) {
+func (r *Repo) ReserveIdemTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p ReserveIdemParams,
+) (ReserveIdemResult, error) {
 	var inserted bool
 
 	err := tx.QueryRow(ctx, `
@@ -265,7 +269,12 @@ type IdemState struct {
 	LeaseFence     int64
 }
 
-func (r *Repo) ReadIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey string) (IdemState, error) {
+func (r *Repo) ReadIdemStateTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	userID string,
+	idemKey string,
+) (IdemState, error) {
 	var s IdemState
 	err := tx.QueryRow(ctx, `
 		SELECT
@@ -308,7 +317,11 @@ const (
 	FinalizeAlreadyFinalized                        // tx found the status change already existed
 )
 
-func (r *Repo) CompleteIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) (FinalizeOutcome, error) {
+func (r *Repo) CompleteIdemTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p FinalizeIdemParams,
+) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
 		SET
@@ -349,7 +362,11 @@ func (r *Repo) CompleteIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemPara
 	return 0, ErrLostLeaseOwnership
 }
 
-func (r *Repo) FailIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) (FinalizeOutcome, error) {
+func (r *Repo) FailIdemTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	p FinalizeIdemParams,
+) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
 		SET
