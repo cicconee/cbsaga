@@ -116,12 +116,7 @@ func (s *Service) CreateWithdrawal(
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
-		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return s.reconcile(ctx, userID, idemKey)
-		}
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
 
@@ -132,12 +127,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		_ = workTx.Rollback(ctx)
-
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
-		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return s.reconcile(ctx, userID, idemKey)
-		}
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: withdrawalID,
@@ -145,12 +135,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		_ = workTx.Rollback(ctx)
-
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
-		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return s.reconcile(ctx, userID, idemKey)
-		}
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
@@ -176,34 +161,21 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		_ = workTx.Rollback(ctx)
-
 		// If withdrawal already exists some how, reconcile, do not mark as failure.
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
 			return s.reconcile(ctx, userID, idemKey)
 		}
-
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
-		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return s.reconcile(ctx, userID, idemKey)
-		}
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 
 	// Mark the idempotency key as completed status.
 	outcome, err := s.completeIdempotency(ctx, workTx, 0, finalParams)
 	if err != nil {
 		_ = workTx.Rollback(ctx)
-
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
 			return s.reconcile(ctx, userID, idemKey)
 		}
-
-		// We owned it, but couldn't finalize, therefore its a failed request.
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, finalParams)
-		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
-			return s.reconcile(ctx, userID, idemKey)
-		}
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 
 	// This current run took too long from the moment of ownership till now, that
@@ -259,6 +231,18 @@ func (s *Service) completeIdempotency(
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
 	})
+}
+
+func (s *Service) failAndReconcile(
+	ctx context.Context,
+	grpcCode int,
+	p finalizeIdemParams,
+) (CreateWithdrawalResult, error) {
+	fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, p)
+	if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
+		return s.reconcile(ctx, p.userID, p.idemKey)
+	}
+	return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 }
 
 func (s *Service) failIdempotencyBestEffort(
