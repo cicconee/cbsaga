@@ -41,19 +41,48 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	var inserted bool
 
 	err := tx.QueryRow(ctx, `
-		INSERT INTO orchestrator.idempotency_keys
-			(id, user_id, idempotency_key, withdrawal_id, 
-			 request_hash, response_code, response_body_json, 
-		   status, grpc_code, updated_at, lease_owner, lease_expires_at,
-			 lease_fence)
-		VALUES
-			(gen_random_uuid(), $1, $2, $3, $4, 0, '{}', $5, 0, $6, $7, $8, 1)
+		INSERT INTO orchestrator.idempotency_keys (
+			id,
+			user_id,
+			idempotency_key,
+			withdrawal_id,
+			request_hash,
+			response_code,
+			response_body_json, 
+			status,
+			grpc_code,
+			updated_at,
+			lease_owner,
+			lease_expires_at,
+			lease_fence
+		)
+		VALUES (
+			gen_random_uuid(),
+			$1, 
+			$2,
+			$3,
+			$4,
+			0,
+			'{}',
+			$5,
+			0,
+			$6,
+			$7,
+			$8,
+			1
+		)
 		ON CONFLICT (user_id, idempotency_key) DO NOTHING
 		RETURNING true
 	`,
-		p.UserID, p.IdempotencyKey, p.WithdrawalID, p.RequestHash,
-		orchestrator.IdemInProgress, p.Now, p.LeaseAttemptID,
-		p.Now.Add(p.LeaseTTL)).Scan(&inserted)
+		p.UserID,
+		p.IdempotencyKey,
+		p.WithdrawalID,
+		p.RequestHash,
+		orchestrator.IdemInProgress,
+		p.Now,
+		p.LeaseAttemptID,
+		p.Now.Add(p.LeaseTTL),
+	).Scan(&inserted)
 
 	if err != nil && err != pgx.ErrNoRows {
 		return ReserveIdempotencyResult{}, err
@@ -82,16 +111,29 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 
 	err = tx.QueryRow(ctx, `
 		SELECT 
-			status, withdrawal_id, request_hash, grpc_code, 
-			response_body_json, lease_owner, lease_expires_at,
+			status,
+			withdrawal_id,
+			request_hash,
+			grpc_code, 
+			response_body_json,
+			lease_owner,
+			lease_expires_at,
 			lease_fence
 		FROM orchestrator.idempotency_keys
-		WHERE user_id = $1 AND idempotency_key = $2
+		WHERE
+			user_id = $1
+			AND idempotency_key = $2
 	`,
-		p.UserID, p.IdempotencyKey,
+		p.UserID,
+		p.IdempotencyKey,
 	).Scan(
-		&status, &withdrawalID, &requestHash,
-		&grpcCode, &respBody, &leaseOwner, &leaseExpiresAt,
+		&status,
+		&withdrawalID,
+		&requestHash,
+		&grpcCode,
+		&respBody,
+		&leaseOwner,
+		&leaseExpiresAt,
 		&leaseFence,
 	)
 	if err != nil {
@@ -109,8 +151,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 		var newLeaseExpiresAt time.Time
 
 		err = tx.QueryRow(ctx, `
-			UPDATE 
-				orchestrator.idempotency_keys
+			UPDATE orchestrator.idempotency_keys
 			SET 
 				lease_owner = $4,
 				lease_expires_at = $5,
@@ -118,15 +159,27 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 				lease_fence = lease_fence + 1
 			WHERE 
 				user_id = $1
-			  AND idempotency_key = $2
-			  AND status = $3
-			  AND lease_expires_at <= $6
+				AND idempotency_key = $2
+				AND status = $3
+				AND lease_expires_at <= $6
 			RETURNING 
-				lease_fence, withdrawal_id, request_hash, lease_expires_at
+				lease_fence,
+				withdrawal_id,
+				request_hash,
+				lease_expires_at
 		`,
-			p.UserID, p.IdempotencyKey, orchestrator.IdemInProgress,
-			p.LeaseAttemptID, p.Now.Add(p.LeaseTTL), p.Now,
-		).Scan(&newLeaseFence, &newWithdrawalID, &newRequestHash, &newLeaseExpiresAt)
+			p.UserID,
+			p.IdempotencyKey,
+			orchestrator.IdemInProgress,
+			p.LeaseAttemptID,
+			p.Now.Add(p.LeaseTTL),
+			p.Now,
+		).Scan(
+			&newLeaseFence,
+			&newWithdrawalID,
+			&newRequestHash,
+			&newLeaseExpiresAt,
+		)
 
 		if err == nil {
 			return ReserveIdempotencyResult{
@@ -184,10 +237,24 @@ type idemState struct {
 func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey string) (idemState, error) {
 	var s idemState
 	err := tx.QueryRow(ctx, `
-		SELECT status, lease_owner, lease_expires_at, lease_fence
+		SELECT
+			status,
+			lease_owner,
+			lease_expires_at,
+			lease_fence
 		FROM orchestrator.idempotency_keys
-		WHERE user_id = $1 AND idempotency_key = $2
-	`, userID, idemKey).Scan(&s.Status, &s.LeaseOwner, &s.LeaseExpiresAt, &s.LeaseFence)
+		WHERE
+			user_id = $1
+			AND idempotency_key = $2
+	`,
+		userID,
+		idemKey,
+	).Scan(
+		&s.Status,
+		&s.LeaseOwner,
+		&s.LeaseExpiresAt,
+		&s.LeaseFence,
+	)
 	if err != nil {
 		return idemState{}, err
 	}
@@ -197,18 +264,25 @@ func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey s
 func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdempotencyParams) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
-		SET status = 'COMPLETED',
-		    grpc_code = $3,
-		    response_code = 200,
-		    updated_at = $4
-		WHERE user_id = $1
-		  AND idempotency_key = $2
-		  AND lease_owner = $5
-		  AND status = $6
+		SET
+			status = 'COMPLETED',
+			grpc_code = $3,
+			response_code = 200,
+			updated_at = $4
+		WHERE
+			user_id = $1
+			AND idempotency_key = $2
+			AND lease_owner = $5
+			AND status = $6
 			AND lease_fence = $7
 	`,
-		p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID,
-		orchestrator.IdemInProgress, p.LeaseFence,
+		p.UserID,
+		p.IdempotencyKey,
+		p.GRPCCode,
+		p.Now,
+		p.LeaseAttemptID,
+		orchestrator.IdemInProgress,
+		p.LeaseFence,
 	)
 	if err != nil {
 		return 0, err
@@ -231,18 +305,25 @@ func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeI
 func (r *Repo) FailIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdempotencyParams) (FinalizeOutcome, error) {
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
-		SET status = 'FAILED',
-		    grpc_code = $3,
-		    response_code = 500,
-		    updated_at = $4
-		WHERE user_id = $1
-		  AND idempotency_key = $2
-		  AND lease_owner = $5
-		  AND status = $6
-			AND lease_fence = $7
+		SET
+			status = 'FAILED',
+			grpc_code = $3,
+			response_code = 500,
+			updated_at = $4
+		WHERE
+			user_id = $1
+			AND idempotency_key = $2
+			AND lease_owner = $5
+			AND status = $6
+			AND lease_fence = $7 
 	`,
-		p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID,
-		orchestrator.IdemInProgress, p.LeaseFence,
+		p.UserID,
+		p.IdempotencyKey,
+		p.GRPCCode,
+		p.Now,
+		p.LeaseAttemptID,
+		orchestrator.IdemInProgress,
+		p.LeaseFence,
 	)
 	if err != nil {
 		return 0, err
@@ -286,12 +367,14 @@ func (r *Repo) GetIdempotencyTx(ctx context.Context, tx pgx.Tx, p GetIdempotency
 			grpc_code,
 			lease_owner,
 			lease_expires_at
-		FROM 
-			orchestrator.idempotency_keys
+		FROM orchestrator.idempotency_keys
 		WHERE
 			user_id = $1
 			AND idempotency_key = $2
-	`, p.UserID, p.IdempotencyKey).Scan(
+	`,
+		p.UserID,
+		p.IdempotencyKey,
+	).Scan(
 		&row.Status,
 		&row.WithdrawalID,
 		&row.RequestHash,
