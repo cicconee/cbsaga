@@ -75,7 +75,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		idemRow, err := s.repo.GetIdempotencyTx(ctx, tx, repo.GetIdempotencyParams{
+		idemRow, err := s.repo.GetIdemTx(ctx, tx, repo.GetIdemParams{
 			UserID:         userID,
 			IdempotencyKey: idemKey,
 		})

@@ -227,15 +227,15 @@ const (
 	FinalizeAlreadyFinalized                        // tx found the status change already existed
 )
 
-type idemState struct {
+type IdemState struct {
 	Status         string
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
 	LeaseFence     int64
 }
 
-func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey string) (idemState, error) {
-	var s idemState
+func (r *Repo) ReadIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey string) (IdemState, error) {
+	var s IdemState
 	err := tx.QueryRow(ctx, `
 		SELECT
 			status,
@@ -256,7 +256,7 @@ func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey s
 		&s.LeaseFence,
 	)
 	if err != nil {
-		return idemState{}, err
+		return IdemState{}, err
 	}
 	return s, nil
 }
@@ -292,7 +292,7 @@ func (r *Repo) CompleteIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemPara
 	}
 
 	// classify miss
-	s, err := r.readIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
+	s, err := r.ReadIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
 	if err != nil {
 		return 0, err
 	}
@@ -332,7 +332,7 @@ func (r *Repo) FailIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) 
 		return FinalizeApplied, nil
 	}
 
-	s, err := r.readIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
+	s, err := r.ReadIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
 	if err != nil {
 		return 0, err
 	}
@@ -342,12 +342,12 @@ func (r *Repo) FailIdemTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemParams) 
 	return 0, ErrLostLeaseOwnership
 }
 
-type GetIdempotencyParams struct {
+type GetIdemParams struct {
 	UserID         string
 	IdempotencyKey string
 }
 
-type GetIdempotencyResult struct {
+type GetIdemResult struct {
 	Status         string
 	WithdrawalID   string
 	RequestHash    string
@@ -356,8 +356,8 @@ type GetIdempotencyResult struct {
 	LeaseExpiresAt time.Time
 }
 
-func (r *Repo) GetIdempotencyTx(ctx context.Context, tx pgx.Tx, p GetIdempotencyParams) (GetIdempotencyResult, error) {
-	row := GetIdempotencyResult{}
+func (r *Repo) GetIdemTx(ctx context.Context, tx pgx.Tx, p GetIdemParams) (GetIdemResult, error) {
+	row := GetIdemResult{}
 
 	err := tx.QueryRow(ctx, `
 		SELECT
@@ -383,7 +383,7 @@ func (r *Repo) GetIdempotencyTx(ctx context.Context, tx pgx.Tx, p GetIdempotency
 		&row.LeaseExpiresAt,
 	)
 	if err != nil {
-		return GetIdempotencyResult{}, fmt.Errorf("repo.GetIdempotency: %w", err)
+		return GetIdemResult{}, fmt.Errorf("repo.GetIdempotency: %w", err)
 	}
 
 	return row, nil
