@@ -14,12 +14,21 @@ RUN_DIR := ./.run
 LOG_DIR := $(RUN_DIR)/logs
 PID_DIR := $(RUN_DIR)/pids
 
+GOLINES_INSTALL=go install github.com/segmentio/golines@latest
+GOLINES_CMD=golines
+GO_FOLDERS=./cmd/ ./internal/
+
 .PHONY: help
 help: ## Show the help menu
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make <target>\n"} \
 	/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 	/^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-18s %s\n", $$1, $$2} \
 	' $(MAKEFILE_LIST)
+
+##@ Code
+shorten-lines: ## Run golines
+	${GOLINES_INSTALL}
+	${GOLINES_CMD} -w --shorten-comments ${GO_FOLDERS} 
 
 ##@ Infra
 up: ## Start docker compose infra (detached)
