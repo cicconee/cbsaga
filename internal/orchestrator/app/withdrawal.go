@@ -161,41 +161,17 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 
 	// begin tx that will create the withdrawal.
 	withdrawalID = idemRow.WithdrawalID
+	leaseFence := idemRow.LeaseFence
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID)
+		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID, leaseFence)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 			return reconcileState(ctx, userID, idemKey)
 		}
 		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
-
-	// Idempotency key was previously stolen from another lease owner.
-	if idemRow.StoleOwnership {
-		// Re-read idempotency inside workTx to avoid racing the previous lease owner’s finalization.
-		// Previous owner could have successfully wrote but before changes are reflected, the
-		// current tx saw it as a IN_PROGRESS expired-lease idempotency row. So re-read to ensure
-		// this did not happen.
-		curIdem, err := s.repo.GetIdempotencyTx(ctx, workTx, repo.GetIdempotencyParams{
-			UserID:         userID,
-			IdempotencyKey: idemKey,
-		})
-		if err != nil {
-			_ = workTx.Rollback(ctx)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return reconcileState(ctx, userID, idemKey)
-			}
-			return CreateWithdrawalResult{}, err
-		}
-
-		if curIdem.Status != orchestrator.IdemInProgress || curIdem.LeaseOwner != leaseAttemptID {
-			_ = workTx.Rollback(ctx)
-			return reconcileState(ctx, userID, idemKey)
-		}
-		// Continues if idempotency row is IN_PROGRESS.
-	}
 
 	// Encode payloads for the outbox_events tables.
 	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
@@ -205,7 +181,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	if err != nil {
 		_ = workTx.Rollback(ctx)
 
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID)
+		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID, leaseFence)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 			return reconcileState(ctx, userID, idemKey)
 		}
@@ -218,7 +194,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	if err != nil {
 		_ = workTx.Rollback(ctx)
 
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID)
+		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID, leaseFence)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 			return reconcileState(ctx, userID, idemKey)
 		}
@@ -254,7 +230,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 			return reconcileState(ctx, userID, idemKey)
 		}
 
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID)
+		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID, leaseFence)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 			return reconcileState(ctx, userID, idemKey)
 		}
@@ -262,7 +238,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	}
 
 	// Mark the idempotency key as completed status.
-	outcome, err := s.completeIdempotency(ctx, workTx, userID, idemKey, now, 0, leaseAttemptID)
+	outcome, err := s.completeIdempotency(ctx, workTx, userID, idemKey, now, 0, leaseAttemptID, leaseFence)
 	if err != nil {
 		_ = workTx.Rollback(ctx)
 
@@ -271,7 +247,7 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 		}
 
 		// We owned it, but couldn't finalize, therefore its a failed request.
-		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID)
+		fOutcome, fErr := s.failIdempotencyBestEffort(ctx, userID, idemKey, now, 13, leaseAttemptID, leaseFence)
 		if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 			return reconcileState(ctx, userID, idemKey)
 		}
@@ -309,17 +285,18 @@ func (s *Service) CreateWithdrawal(ctx context.Context, p CreateWithdrawalParams
 	}, nil
 }
 
-func (s *Service) completeIdempotency(ctx context.Context, workTx pgx.Tx, userID, idemKey string, now time.Time, grpcCode int, leaseAttemptID string) (repo.FinalizeOutcome, error) {
+func (s *Service) completeIdempotency(ctx context.Context, workTx pgx.Tx, userID, idemKey string, now time.Time, grpcCode int, leaseAttemptID string, leaseFence int64) (repo.FinalizeOutcome, error) {
 	return s.repo.CompleteIdempotencyTx(ctx, workTx, repo.FinalizeIdempotencyParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 		GRPCCode:       grpcCode,
 		Now:            now,
 		LeaseAttemptID: leaseAttemptID,
+		LeaseFence:     leaseFence,
 	})
 }
 
-func (s *Service) failIdempotencyBestEffort(ctx context.Context, userID, idemKey string, now time.Time, grpcCode int, leaseAttemptID string) (repo.FinalizeOutcome, error) {
+func (s *Service) failIdempotencyBestEffort(ctx context.Context, userID, idemKey string, now time.Time, grpcCode int, leaseAttemptID string, leaseFence int64) (repo.FinalizeOutcome, error) {
 	// TODO: multiple retries with backoff and jitter.
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -333,6 +310,7 @@ func (s *Service) failIdempotencyBestEffort(ctx context.Context, userID, idemKey
 		GRPCCode:       grpcCode,
 		Now:            now,
 		LeaseAttemptID: leaseAttemptID,
+		LeaseFence:     leaseFence,
 	})
 	if err != nil {
 		return 0, err

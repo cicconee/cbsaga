@@ -34,6 +34,7 @@ type ReserveIdempotencyResult struct {
 	GRPCCode       int
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
+	LeaseFence     int64
 }
 
 func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIdempotencyParams) (ReserveIdempotencyResult, error) {
@@ -43,9 +44,10 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 		INSERT INTO orchestrator.idempotency_keys
 			(id, user_id, idempotency_key, withdrawal_id, 
 			 request_hash, response_code, response_body_json, 
-		   status, grpc_code, updated_at, lease_owner, lease_expires_at)
+		   status, grpc_code, updated_at, lease_owner, lease_expires_at,
+			 lease_fence)
 		VALUES
-			(gen_random_uuid(), $1, $2, $3, $4, 0, '{}', $5, 0, $6, $7, $8)
+			(gen_random_uuid(), $1, $2, $3, $4, 0, '{}', $5, 0, $6, $7, $8, 1)
 		ON CONFLICT (user_id, idempotency_key) DO NOTHING
 		RETURNING true
 	`,
@@ -65,6 +67,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 			RequestHash:    p.RequestHash,
 			LeaseOwner:     p.LeaseAttemptID,
 			LeaseExpiresAt: p.Now.Add(p.LeaseTTL),
+			LeaseFence:     1,
 		}, nil
 	}
 
@@ -75,11 +78,13 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	var respBody string
 	var leaseOwner string
 	var leaseExpiresAt time.Time
+	var leaseFence int64
 
 	err = tx.QueryRow(ctx, `
 		SELECT 
 			status, withdrawal_id, request_hash, grpc_code, 
-			response_body_json, lease_owner, lease_expires_at
+			response_body_json, lease_owner, lease_expires_at,
+			lease_fence
 		FROM orchestrator.idempotency_keys
 		WHERE user_id = $1 AND idempotency_key = $2
 	`,
@@ -87,6 +92,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	).Scan(
 		&status, &withdrawalID, &requestHash,
 		&grpcCode, &respBody, &leaseOwner, &leaseExpiresAt,
+		&leaseFence,
 	)
 	if err != nil {
 		return ReserveIdempotencyResult{}, err
@@ -97,38 +103,47 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 	}
 
 	if status == orchestrator.IdemInProgress && !leaseExpiresAt.After(p.Now) {
-		var tookOwnership bool
+		var newLeaseFence int64
+		var newWithdrawalID string
+		var newRequestHash string
+		var newLeaseExpiresAt time.Time
+
 		err = tx.QueryRow(ctx, `
 			UPDATE 
 				orchestrator.idempotency_keys
 			SET 
 				lease_owner = $4,
 				lease_expires_at = $5,
-				updated_at = $6
+				updated_at = $6,
+				lease_fence = lease_fence + 1
 			WHERE 
 				user_id = $1
 			  AND idempotency_key = $2
 			  AND status = $3
-				AND request_hash = $7
 			  AND lease_expires_at <= $6
 			RETURNING 
-				true
+				lease_fence, withdrawal_id, request_hash, lease_expires_at
 		`,
 			p.UserID, p.IdempotencyKey, orchestrator.IdemInProgress,
-			p.LeaseAttemptID, p.Now.Add(p.LeaseTTL), p.Now, p.RequestHash,
-		).Scan(&tookOwnership)
+			p.LeaseAttemptID, p.Now.Add(p.LeaseTTL), p.Now,
+		).Scan(&newLeaseFence, &newWithdrawalID, &newRequestHash, &newLeaseExpiresAt)
 
-		if err == nil && tookOwnership {
+		if err == nil {
 			return ReserveIdempotencyResult{
 				Owned:          true,
 				StoleOwnership: true,
 				Status:         orchestrator.IdemInProgress,
-				WithdrawalID:   withdrawalID,
-				RequestHash:    requestHash,
+				WithdrawalID:   newWithdrawalID,
+				RequestHash:    newRequestHash,
 				LeaseOwner:     p.LeaseAttemptID,
 				LeaseExpiresAt: p.Now.Add(p.LeaseTTL),
+				LeaseFence:     newLeaseFence,
 			}, nil
 		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return ReserveIdempotencyResult{}, err
+		}
+		// If update didn't take effect (race), fall through.
 	}
 
 	return ReserveIdempotencyResult{
@@ -139,6 +154,7 @@ func (r *Repo) ReserveIdempotencyTx(ctx context.Context, tx pgx.Tx, p ReserveIde
 		GRPCCode:       grpcCode,
 		LeaseOwner:     leaseOwner,
 		LeaseExpiresAt: leaseExpiresAt,
+		LeaseFence:     leaseFence,
 	}, nil
 }
 
@@ -148,6 +164,7 @@ type FinalizeIdempotencyParams struct {
 	GRPCCode       int
 	Now            time.Time
 	LeaseAttemptID string
+	LeaseFence     int64
 }
 
 type FinalizeOutcome int
@@ -161,15 +178,16 @@ type idemState struct {
 	Status         string
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
+	LeaseFence     int64
 }
 
 func (r *Repo) readIdemStateTx(ctx context.Context, tx pgx.Tx, userID, idemKey string) (idemState, error) {
 	var s idemState
 	err := tx.QueryRow(ctx, `
-		SELECT status, lease_owner, lease_expires_at
+		SELECT status, lease_owner, lease_expires_at, lease_fence
 		FROM orchestrator.idempotency_keys
 		WHERE user_id = $1 AND idempotency_key = $2
-	`, userID, idemKey).Scan(&s.Status, &s.LeaseOwner, &s.LeaseExpiresAt)
+	`, userID, idemKey).Scan(&s.Status, &s.LeaseOwner, &s.LeaseExpiresAt, &s.LeaseFence)
 	if err != nil {
 		return idemState{}, err
 	}
@@ -187,7 +205,11 @@ func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeI
 		  AND idempotency_key = $2
 		  AND lease_owner = $5
 		  AND status = $6
-	`, p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID, orchestrator.IdemInProgress)
+			AND lease_fence = $7
+	`,
+		p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID,
+		orchestrator.IdemInProgress, p.LeaseFence,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -203,9 +225,6 @@ func (r *Repo) CompleteIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeI
 	if s.Status == orchestrator.IdemCompleted || s.Status == orchestrator.IdemFailed {
 		return FinalizeAlreadyFinalized, nil
 	}
-	if s.Status == orchestrator.IdemInProgress && s.LeaseOwner != p.LeaseAttemptID {
-		return 0, ErrLostLeaseOwnership
-	}
 	return 0, ErrLostLeaseOwnership
 }
 
@@ -220,7 +239,11 @@ func (r *Repo) FailIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemp
 		  AND idempotency_key = $2
 		  AND lease_owner = $5
 		  AND status = $6
-	`, p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID, orchestrator.IdemInProgress)
+			AND lease_fence = $7
+	`,
+		p.UserID, p.IdempotencyKey, p.GRPCCode, p.Now, p.LeaseAttemptID,
+		orchestrator.IdemInProgress, p.LeaseFence,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -234,9 +257,6 @@ func (r *Repo) FailIdempotencyTx(ctx context.Context, tx pgx.Tx, p FinalizeIdemp
 	}
 	if s.Status == orchestrator.IdemCompleted || s.Status == orchestrator.IdemFailed {
 		return FinalizeAlreadyFinalized, nil
-	}
-	if s.Status == orchestrator.IdemInProgress && s.LeaseOwner != p.LeaseAttemptID {
-		return 0, ErrLostLeaseOwnership
 	}
 	return 0, ErrLostLeaseOwnership
 }
