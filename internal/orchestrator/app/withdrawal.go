@@ -53,10 +53,6 @@ func (s *Service) CreateWithdrawal(
 		return CreateWithdrawalResult{}, err
 	}
 
-	leaseAttemptID := uuid.New().String()
-	withdrawalID := uuid.New().String()
-	sagaID := uuid.New().String()
-
 	// Reserve the idempotency key
 	reserveTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -68,8 +64,8 @@ func (s *Service) CreateWithdrawal(
 		UserID:         v.UserID,
 		IdempotencyKey: v.IdempotencyKey,
 		RequestHash:    v.RequestHash,
-		WithdrawalID:   withdrawalID,
-		LeaseAttemptID: leaseAttemptID,
+		WithdrawalID:   uuid.NewString(),
+		LeaseAttemptID: uuid.NewString(),
 		LeaseTTL:       30 * time.Second,
 		Now:            now,
 	})
@@ -90,14 +86,12 @@ func (s *Service) CreateWithdrawal(
 	}
 
 	// begin tx that will create the withdrawal.
-	withdrawalID = idemRow.WithdrawalID
-	leaseFence := idemRow.LeaseFence
 	finalParams := finalizeIdemParams{
 		userID:         v.UserID,
 		idemKey:        v.IdempotencyKey,
 		now:            now,
-		leaseAttemptID: leaseAttemptID,
-		leaseFence:     leaseFence,
+		leaseAttemptID: idemRow.LeaseOwner,
+		leaseFence:     idemRow.LeaseFence,
 	}
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -108,7 +102,7 @@ func (s *Service) CreateWithdrawal(
 
 	// Encode payloads for the outbox_events tables.
 	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
-		WithdrawalID: withdrawalID,
+		WithdrawalID: idemRow.WithdrawalID,
 		UserID:       v.UserID,
 	})
 	if err != nil {
@@ -116,7 +110,7 @@ func (s *Service) CreateWithdrawal(
 		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
-		WithdrawalID: withdrawalID,
+		WithdrawalID: idemRow.WithdrawalID,
 		UserID:       v.UserID,
 	})
 	if err != nil {
@@ -125,8 +119,8 @@ func (s *Service) CreateWithdrawal(
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
-		WithdrawalID:    withdrawalID,
-		SagaID:          sagaID,
+		WithdrawalID:    idemRow.WithdrawalID,
+		SagaID:          uuid.NewString(),
 		UserID:          v.UserID,
 		Asset:           v.Asset,
 		AmountMinor:     p.AmountMinor,
