@@ -20,5 +20,16 @@ func isRetryableFailIdem(err error) bool {
 	if errors.Is(err, repo.ErrLostLeaseOwnership) {
 		return false
 	}
+
+	var cuErr postgres.CommitUnknownError
+	if errors.As(err, &cuErr) {
+		return false
+	}
+
+	var btxErr postgres.BeginTxError
+	if errors.As(err, &btxErr) {
+		return postgres.IsRetryableBeginCause(btxErr.Unwrap())
+	}
+
 	return postgres.IsRetryablePostgres(err)
 }
