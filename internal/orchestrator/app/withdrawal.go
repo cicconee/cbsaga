@@ -8,6 +8,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
+	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
@@ -239,28 +240,40 @@ func (s *Service) failIdempotencyBestEffort(
 	grpcCode int,
 	p finalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
-	// TODO: multiple retries with backoff and jitter.
-	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	var outcome repo.FinalizeOutcome
 
-	outcome, err := s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
-		UserID:         p.userID,
-		IdempotencyKey: p.idemKey,
-		GRPCCode:       grpcCode,
-		Now:            p.now,
-		LeaseAttemptID: p.leaseAttemptID,
-		LeaseFence:     p.leaseFence,
-		Status:         orchestrator.IdemFailed,
-	})
-	if err != nil {
+	finalize := func() error {
+		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		o, err := s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
+			UserID:         p.userID,
+			IdempotencyKey: p.idemKey,
+			GRPCCode:       grpcCode,
+			Now:            p.now,
+			LeaseAttemptID: p.leaseAttemptID,
+			LeaseFence:     p.leaseFence,
+			Status:         orchestrator.IdemFailed,
+		})
+		if err != nil {
+			return err
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+
+		outcome = o
+		return nil
+	}
+
+	if err := retry.Do(ctx, failIdemRetryPolicy(), finalize); err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
+
 	return outcome, nil
 }
 
