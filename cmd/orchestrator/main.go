@@ -55,7 +55,7 @@ func main() {
 		}
 	}()
 
-	svc := app.NewService(pool)
+	svc := app.NewService(pool, log)
 
 	srv, err := grpcserver.New(
 		grpcserver.Options{

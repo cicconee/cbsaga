@@ -9,6 +9,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
+	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
@@ -20,12 +21,14 @@ import (
 type Service struct {
 	db   *pgxpool.Pool
 	repo *repo.Repo
+	log  *logging.Logger
 }
 
-func NewService(db *pgxpool.Pool) *Service {
+func NewService(db *pgxpool.Pool, log *logging.Logger) *Service {
 	return &Service{
 		db:   db,
 		repo: repo.New(),
+		log:  log,
 	}
 }
 
@@ -93,6 +96,8 @@ func (s *Service) CreateWithdrawal(
 		now:            now,
 		leaseAttemptID: idemRow.LeaseOwner,
 		leaseFence:     idemRow.LeaseFence,
+		traceID:        v.TraceID,
+		withdrawalID:   idemRow.WithdrawalID,
 	}
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
@@ -199,6 +204,8 @@ type finalizeIdemParams struct {
 	now            time.Time
 	leaseAttemptID string
 	leaseFence     int64
+	traceID        string
+	withdrawalID   string
 }
 
 func (s *Service) completeIdempotency(
@@ -224,10 +231,82 @@ func (s *Service) failAndReconcile(
 	p finalizeIdemParams,
 ) (CreateWithdrawalResult, error) {
 	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
-	if err != nil || outcome == repo.FinalizeAlreadyFinalized {
-		return s.reconcile(ctx, p.userID, p.idemKey)
+	if err == nil && outcome == repo.FinalizeApplied {
+		// Finalized applied successfully (marked FAILED), so return the domain error.
+		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
 	}
-	return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
+
+	res, rerr := s.reconcile(ctx, p.userID, p.idemKey)
+
+	if rerr != nil {
+		return CreateWithdrawalResult{}, fmt.Errorf(
+			"reconcile failed after idempotency finalize attempt (outcome=%v): %w",
+			outcome,
+			errors.Join(err, rerr),
+		)
+	}
+
+	var cuErr postgres.CommitUnknownError
+	var btErr postgres.BeginTxError
+
+	switch {
+	case err != nil && errors.As(err, &cuErr):
+		// TODO: log warn
+		s.log.Error("reconcile recovered after idempotency finalize commit outcome unknown",
+			"trace_id", p.traceID,
+			"user_id", p.userID,
+			"idempotency_key", p.idemKey,
+			"withdrawal_id", p.withdrawalID,
+			"op", cuErr.Op,
+			"grpc_code", grpcCode,
+			"tx_duration", cuErr.Duration,
+			"ctx_err", cuErr.CtxErr,
+			"finalize_err", err,
+		)
+	case err != nil && errors.As(err, &btErr):
+		// TODO: log warn
+		s.log.Error("reconcile recovered after idempotency finalize begin tx failure",
+			"trace_id", p.traceID,
+			"user_id", p.userID,
+			"idempotency_key", p.idemKey,
+			"withdrawal_id", p.withdrawalID,
+			"op", btErr.Op,
+			"grpc_code", grpcCode,
+			"ctx_err", btErr.CtxErr,
+			"finalize_err", err,
+		)
+	case err != nil && errors.Is(err, repo.ErrLostLeaseOwnership):
+		// TODO: log debug
+		s.log.Error("reconcile recovered after idempotency finalize lost ownership",
+			"trace_id", p.traceID,
+			"user_id", p.userID,
+			"idempotency_key", p.idemKey,
+			"withdrawal_id", p.withdrawalID,
+			"grpc_code", grpcCode,
+			"finalize_err", err,
+		)
+	case err == nil && outcome == repo.FinalizeAlreadyFinalized:
+		// TODO: log debug
+		s.log.Info("idempotency already finalized: returned reconciled response",
+			"trace_id", p.traceID,
+			"user_id", p.userID,
+			"idempotency_key", p.idemKey,
+			"withdrawal_id", p.withdrawalID,
+			"grpc_code", grpcCode,
+		)
+	default:
+		// TODO: log warn
+		s.log.Error("reconcile recovered after idempotency finalize failure",
+			"trace_id", p.traceID,
+			"user_id", p.userID,
+			"idempotency_key", p.idemKey,
+			"withdrawal_id", p.withdrawalID,
+			"grpc_code", grpcCode,
+			"finalize_err", err,
+		)
+	}
+
+	return res, nil
 }
 
 func (s *Service) failIdempotencyWithRetry(
