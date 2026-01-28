@@ -223,8 +223,8 @@ func (s *Service) failAndReconcile(
 	grpcCode int,
 	p finalizeIdemParams,
 ) (CreateWithdrawalResult, error) {
-	fOutcome, fErr := s.failIdempotencyWithRetry(ctx, grpcCode, p)
-	if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
+	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
+	if err != nil || outcome == repo.FinalizeAlreadyFinalized {
 		return s.reconcile(ctx, p.userID, p.idemKey)
 	}
 	return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
