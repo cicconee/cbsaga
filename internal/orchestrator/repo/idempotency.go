@@ -313,6 +313,7 @@ type FinalizeIdemParams struct {
 	Now            time.Time
 	LeaseAttemptID string
 	LeaseFence     int64
+	Status         string
 }
 
 type FinalizeOutcome int
@@ -322,7 +323,7 @@ const (
 	FinalizeAlreadyFinalized                        // tx found the status change already existed
 )
 
-func (r *Repo) CompleteIdemTx(
+func (r *Repo) FinalizeIdemTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	p FinalizeIdemParams,
@@ -330,21 +331,21 @@ func (r *Repo) CompleteIdemTx(
 	tag, err := tx.Exec(ctx, `
 		UPDATE orchestrator.idempotency_keys
 		SET
-			status = 'COMPLETED',
-			grpc_code = $3,
+			status = $1,
+			grpc_code = $2,
 			response_code = 200,
-			updated_at = $4
+			updated_at = $3
 		WHERE
-			user_id = $1
-			AND idempotency_key = $2
-			AND lease_owner = $5
-			AND status = $6
-			AND lease_fence = $7
-	`,
-		p.UserID,
-		p.IdempotencyKey,
+			user_id = $4
+			AND idempotency_key = $5
+			AND lease_owner = $6
+			AND status = $7
+			AND lease_fence = $8`,
+		p.Status,
 		p.GRPCCode,
 		p.Now,
+		p.UserID,
+		p.IdempotencyKey,
 		p.LeaseAttemptID,
 		orchestrator.IdemInProgress,
 		p.LeaseFence,
@@ -357,50 +358,6 @@ func (r *Repo) CompleteIdemTx(
 	}
 
 	// classify miss
-	s, err := r.ReadIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
-	if err != nil {
-		return 0, err
-	}
-	if s.Status == orchestrator.IdemCompleted || s.Status == orchestrator.IdemFailed {
-		return FinalizeAlreadyFinalized, nil
-	}
-	return 0, ErrLostLeaseOwnership
-}
-
-func (r *Repo) FailIdemTx(
-	ctx context.Context,
-	tx pgx.Tx,
-	p FinalizeIdemParams,
-) (FinalizeOutcome, error) {
-	tag, err := tx.Exec(ctx, `
-		UPDATE orchestrator.idempotency_keys
-		SET
-			status = 'FAILED',
-			grpc_code = $3,
-			response_code = 500,
-			updated_at = $4
-		WHERE
-			user_id = $1
-			AND idempotency_key = $2
-			AND lease_owner = $5
-			AND status = $6
-			AND lease_fence = $7 
-	`,
-		p.UserID,
-		p.IdempotencyKey,
-		p.GRPCCode,
-		p.Now,
-		p.LeaseAttemptID,
-		orchestrator.IdemInProgress,
-		p.LeaseFence,
-	)
-	if err != nil {
-		return 0, err
-	}
-	if tag.RowsAffected() == 1 {
-		return FinalizeApplied, nil
-	}
-
 	s, err := r.ReadIdemStateTx(ctx, tx, p.UserID, p.IdempotencyKey)
 	if err != nil {
 		return 0, err

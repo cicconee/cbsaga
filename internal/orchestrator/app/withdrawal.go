@@ -211,13 +211,14 @@ func (s *Service) completeIdempotency(
 	grpcCode int,
 	p finalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
-	return s.repo.CompleteIdemTx(ctx, workTx, repo.FinalizeIdemParams{
+	return s.repo.FinalizeIdemTx(ctx, workTx, repo.FinalizeIdemParams{
 		UserID:         p.userID,
 		IdempotencyKey: p.idemKey,
 		GRPCCode:       grpcCode,
 		Now:            p.now,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
+		Status:         orchestrator.IdemCompleted,
 	})
 }
 
@@ -245,13 +246,14 @@ func (s *Service) failIdempotencyBestEffort(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	outcome, err := s.repo.FailIdemTx(ctx, tx, repo.FinalizeIdemParams{
+	outcome, err := s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
 		UserID:         p.userID,
 		IdempotencyKey: p.idemKey,
 		GRPCCode:       grpcCode,
 		Now:            p.now,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
+		Status:         orchestrator.IdemFailed,
 	})
 	if err != nil {
 		return 0, err
