@@ -129,9 +129,9 @@ func (s *Service) CreateWithdrawal(
 		SagaID:          uuid.NewString(),
 		UserID:          v.UserID,
 		Asset:           v.Asset,
-		AmountMinor:     p.AmountMinor,
+		AmountMinor:     v.AmountMinor,
 		DestinationAddr: v.DestinationAddr,
-		TraceID:         p.TraceID,
+		TraceID:         v.TraceID,
 		OutboxEvents: []repo.OutboxEvent{
 			{
 				EventType: orchestrator.EventTypeWithdrawalRequested,
