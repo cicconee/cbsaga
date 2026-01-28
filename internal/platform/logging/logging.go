@@ -18,6 +18,14 @@ func (l *Logger) Info(msg string, kv ...any) {
 	l.Printf("INFO  %s %v", msg, kv)
 }
 
+func (l *Logger) Debug(msg string, kv ...any) {
+	l.Printf("DEBUG  %s %v", msg, kv)
+}
+
+func (l *Logger) Warn(msg string, kv ...any) {
+	l.Printf("WARN  %s %v", msg, kv)
+}
+
 func (l *Logger) Error(msg string, kv ...any) {
 	l.Printf("ERROR  %s %v", msg, kv)
 }

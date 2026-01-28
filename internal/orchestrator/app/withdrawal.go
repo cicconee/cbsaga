@@ -246,8 +246,7 @@ func (s *Service) failAndReconcile(
 
 	switch {
 	case err != nil && errors.As(err, &cuErr):
-		// TODO: log warn
-		s.log.Error("reconcile recovered after idempotency finalize commit outcome unknown",
+		s.log.Warn("reconcile recovered after idempotency finalize commit outcome unknown",
 			"trace_id", p.traceID,
 			"user_id", p.userID,
 			"idempotency_key", p.idemKey,
@@ -259,8 +258,7 @@ func (s *Service) failAndReconcile(
 			"finalize_err", err,
 		)
 	case err != nil && errors.As(err, &btErr):
-		// TODO: log warn
-		s.log.Error("reconcile recovered after idempotency finalize begin tx failure",
+		s.log.Warn("reconcile recovered after idempotency finalize begin tx failure",
 			"trace_id", p.traceID,
 			"user_id", p.userID,
 			"idempotency_key", p.idemKey,
@@ -271,8 +269,7 @@ func (s *Service) failAndReconcile(
 			"finalize_err", err,
 		)
 	case err != nil && errors.Is(err, repo.ErrLostLeaseOwnership):
-		// TODO: log debug
-		s.log.Error("reconcile recovered after idempotency finalize lost ownership",
+		s.log.Debug("reconcile recovered after idempotency finalize lost ownership",
 			"trace_id", p.traceID,
 			"user_id", p.userID,
 			"idempotency_key", p.idemKey,
@@ -281,8 +278,7 @@ func (s *Service) failAndReconcile(
 			"finalize_err", err,
 		)
 	case err == nil && outcome == repo.FinalizeAlreadyFinalized:
-		// TODO: log debug
-		s.log.Info("idempotency already finalized: returned reconciled response",
+		s.log.Debug("idempotency already finalized: returned reconciled response",
 			"trace_id", p.traceID,
 			"user_id", p.userID,
 			"idempotency_key", p.idemKey,
@@ -290,8 +286,7 @@ func (s *Service) failAndReconcile(
 			"grpc_code", grpcCode,
 		)
 	default:
-		// TODO: log warn
-		s.log.Error("reconcile recovered after idempotency finalize failure",
+		s.log.Warn("reconcile recovered after idempotency finalize failure",
 			"trace_id", p.traceID,
 			"user_id", p.userID,
 			"idempotency_key", p.idemKey,
