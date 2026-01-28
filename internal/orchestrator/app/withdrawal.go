@@ -112,7 +112,6 @@ func (s *Service) CreateWithdrawal(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		_ = workTx.Rollback(ctx)
 		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
@@ -120,7 +119,6 @@ func (s *Service) CreateWithdrawal(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		_ = workTx.Rollback(ctx)
 		return s.failAndReconcile(ctx, 13, finalParams)
 	}
 
@@ -146,7 +144,6 @@ func (s *Service) CreateWithdrawal(
 		},
 	})
 	if err != nil {
-		_ = workTx.Rollback(ctx)
 		// If withdrawal already exists some how, reconcile, do not mark as failure.
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
@@ -157,7 +154,6 @@ func (s *Service) CreateWithdrawal(
 	// Mark the idempotency key as completed status.
 	outcome, err := s.completeIdempotency(ctx, workTx, 0, finalParams)
 	if err != nil {
-		_ = workTx.Rollback(ctx)
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
@@ -167,7 +163,6 @@ func (s *Service) CreateWithdrawal(
 	// This current run took too long from the moment of ownership till now, that
 	// another run gained ownership of the lease and already finalized the withdrawal request.
 	if outcome == repo.FinalizeAlreadyFinalized {
-		_ = workTx.Rollback(ctx)
 		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
