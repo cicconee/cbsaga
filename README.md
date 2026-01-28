@@ -165,6 +165,28 @@ grpcurl -plaintext -d '{
 
 This section holds helpful commands when developing in this repo.
 
+### Database 
+
+Spin up a `psql` instance using the following commands.
+
+#### Orchestrator Database
+
+```zsh
+docker run --rm -it \
+  --network deployments_default \
+  postgres:16 \
+  psql "postgres://postgres:postgres@cbsaga-postgres:5432/orchestrator"
+```
+
+#### Identity Database
+
+```zsh
+docker run --rm -it \
+  --network deployments_default \
+  postgres:16 \
+  psql "postgres://postgres:postgres@cbsaga-identity-postgres:5432/identity"
+```
+
 ### Creating Migrations
 
 To create a new migration at a specified location, run the following command replacing the necessary values.
