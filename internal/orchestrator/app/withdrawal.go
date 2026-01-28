@@ -226,7 +226,7 @@ func (s *Service) failAndReconcile(
 	grpcCode int,
 	p finalizeIdemParams,
 ) (CreateWithdrawalResult, error) {
-	fOutcome, fErr := s.failIdempotencyBestEffort(ctx, 13, p)
+	fOutcome, fErr := s.failIdempotencyBestEffort(ctx, grpcCode, p)
 	if fErr != nil || fOutcome == repo.FinalizeAlreadyFinalized {
 		return s.reconcile(ctx, p.userID, p.idemKey)
 	}
