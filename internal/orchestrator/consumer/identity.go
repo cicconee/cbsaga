@@ -72,105 +72,106 @@ func (i *Identity) Run(ctx context.Context) error {
 			return err
 		}
 
-		headers := messaging.NewHeaders(m.Headers)
-		traceID, ok := headers.String("trace_id")
-		if !ok || traceID == "" {
-			// TODO: This should never be ignored. This must be made apparent the moment it happens.
-			traceID = "local-trace-id-orchestrator"
-		}
-
-		eventType, ok := headers.String("event_type")
-		if !ok || eventType == "" {
-			// TODO: Should log.
-			continue
-		}
-		if eventType != identity.EventTypeIdentityVerified &&
-			eventType != identity.EventTypeIdentityRejected {
-			// TODO: Should log.
-			continue
-		}
-
-		identityEvtPayload := identity.IdentityRequestEvtPayload{}
-		err = messaging.DecodeConnectEnvelopeValid(m.Value, &identityEvtPayload)
-		if err != nil {
-			// TODO: log, remember that decode also validates the event.
-			continue
-		}
-
-		tx, err := i.db.BeginTx(ctx, pgx.TxOptions{})
-		if err != nil {
+		if err := i.handleMessage(ctx, m); err != nil {
 			return err
 		}
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		row, err := i.repo.GetWithdrawal(ctx, tx, repo.GetWithdrawalParams{
-			WithdrawalID: identityEvtPayload.WithdrawalID,
-		})
-		if err != nil {
-			return err
-		}
-
-		// Build out next event payload.
-		// identity = VERIFIED -> RiskCheckCreated event_type to be passed to risk service.
-		// Aggregate (withdrawal) is now in IN_PROGRESS status
-		//
-		// identity = REJECTED -> WithdrawalFailed event_type to be passed to _ service. Aggregate
-		// (withdrawal) is now in FAILED status
-		var outboxEventType string
-		var routeKey string
-		switch eventType {
-		case identity.EventTypeIdentityVerified:
-			outboxEventType = risk.EventTypeRiskCheckRequested
-			routeKey = risk.RouteKeyRiskCmd
-		case identity.EventTypeIdentityRejected:
-			outboxEventType = orchestrator.EventTypeWithdrawalFailed
-			routeKey = orchestrator.RouteKeyWithdrawalEvt
-		default:
-		}
-
-		riskPayload, err := codec.EncodeValid(&risk.RiskCheckRequestPayload{
-			WithdrawalID:    identityEvtPayload.WithdrawalID,
-			UserID:          row.UserID,
-			Asset:           row.Asset,
-			AmountMinor:     row.AmountMinor,
-			DestinationAddr: row.DestinationAddr,
-		})
-		if err != nil {
-			// TODO: log and continue.
-			continue
-		}
-
-		if err := i.repo.ApplyIdentityResultTx(ctx, tx, repo.ApplyIdentityResultParams{
-			WithdrawalID:      identityEvtPayload.WithdrawalID,
-			UserID:            identityEvtPayload.UserID,
-			IdentityEventType: eventType,
-			Reason:            identityEvtPayload.Reason,
-			UpdatedAt:         time.Now().UTC(),
-			TraceID:           traceID,
-			OutboxEventType:   outboxEventType,
-			OutboxPayload:     string(riskPayload),
-			RouteKey:          routeKey,
-		}); err != nil {
-			i.log.Error("ApplyIdentityResultTx failed",
-				"err", err,
-				"withdrawal_id", identityEvtPayload.WithdrawalID,
-			)
-			return err
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return err
-		}
-
-		if err := i.r.CommitMessages(ctx, m); err != nil {
-			i.log.Error("CommitMessages failed", "err", err)
-			return err
-		}
-
-		i.log.Info("identity result applied",
-			"withdrawal_id", identityEvtPayload.WithdrawalID,
-			"event_type", eventType,
-			"trace_id", traceID,
-		)
 	}
+}
+
+func (i *Identity) handleMessage(ctx context.Context, m kafka.Message) error {
+	headers := messaging.NewHeaders(m.Headers)
+	traceID, ok := headers.String("trace_id")
+	if !ok || traceID == "" {
+		traceID = "local-trace-id-orchestrator"
+	}
+
+	eventType, ok := headers.String("event_type")
+	if !ok || eventType == "" {
+		// TODO: Should log.
+		return i.r.CommitMessages(ctx, m)
+	}
+	if eventType != identity.EventTypeIdentityVerified &&
+		eventType != identity.EventTypeIdentityRejected {
+		// TODO: Should log.
+		return i.r.CommitMessages(ctx, m)
+	}
+
+	identityEvtPayload := identity.IdentityRequestEvtPayload{}
+	err := messaging.DecodeConnectEnvelopeValid(m.Value, &identityEvtPayload)
+	if err != nil {
+		// TODO: log, remember that decode also validates the event.
+		return i.r.CommitMessages(ctx, m)
+	}
+
+	tx, err := i.db.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	row, err := i.repo.GetWithdrawal(ctx, tx, repo.GetWithdrawalParams{
+		WithdrawalID: identityEvtPayload.WithdrawalID,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Build out next event payload.
+	// identity = VERIFIED -> RiskCheckCreated event_type to be passed to risk service.
+	// Aggregate (withdrawal) is now in IN_PROGRESS status
+	//
+	// identity = REJECTED -> WithdrawalFailed event_type to be passed to _ service. Aggregate
+	// (withdrawal) is now in FAILED status
+	var outboxEventType string
+	var routeKey string
+	switch eventType {
+	case identity.EventTypeIdentityVerified:
+		outboxEventType = risk.EventTypeRiskCheckRequested
+		routeKey = risk.RouteKeyRiskCmd
+	case identity.EventTypeIdentityRejected:
+		outboxEventType = orchestrator.EventTypeWithdrawalFailed
+		routeKey = orchestrator.RouteKeyWithdrawalEvt
+	default:
+	}
+
+	riskPayload, err := codec.EncodeValid(&risk.RiskCheckRequestPayload{
+		WithdrawalID:    identityEvtPayload.WithdrawalID,
+		UserID:          row.UserID,
+		Asset:           row.Asset,
+		AmountMinor:     row.AmountMinor,
+		DestinationAddr: row.DestinationAddr,
+	})
+	if err != nil {
+		return i.r.CommitMessages(ctx, m)
+	}
+
+	if err := i.repo.ApplyIdentityResultTx(ctx, tx, repo.ApplyIdentityResultParams{
+		WithdrawalID:      identityEvtPayload.WithdrawalID,
+		UserID:            identityEvtPayload.UserID,
+		IdentityEventType: eventType,
+		Reason:            identityEvtPayload.Reason,
+		UpdatedAt:         time.Now().UTC(),
+		TraceID:           traceID,
+		OutboxEventType:   outboxEventType,
+		OutboxPayload:     string(riskPayload),
+		RouteKey:          routeKey,
+	}); err != nil {
+		i.log.Error("ApplyIdentityResultTx failed",
+			"err", err,
+			"withdrawal_id", identityEvtPayload.WithdrawalID,
+		)
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	i.log.Info("identity result applied",
+		"withdrawal_id", identityEvtPayload.WithdrawalID,
+		"event_type", eventType,
+		"trace_id", traceID,
+	)
+
+	return nil
 }
