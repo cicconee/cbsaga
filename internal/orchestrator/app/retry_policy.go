@@ -8,6 +8,31 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/retry"
 )
 
+func reserveIdemRetryPolicy() retry.Config {
+	cfg := retry.DefaultConfig()
+	cfg.IsRetryable = isRetryableReserveIdem
+	return cfg
+}
+
+func isRetryableReserveIdem(err error) bool {
+	// Key already used for a finalized idempotency key. It will never succeed.
+	if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
+		return false
+	}
+
+	var cuErr postgres.CommitUnknownError
+	if errors.As(err, &cuErr) {
+		return false
+	}
+
+	var btxErr postgres.BeginTxError
+	if errors.As(err, &btxErr) {
+		return postgres.IsRetryableBeginCause(btxErr.Unwrap())
+	}
+
+	return postgres.IsRetryablePostgres(err)
+}
+
 func failIdemRetryPolicy() retry.Config {
 	cfg := retry.DefaultConfig()
 	cfg.IsRetryable = isRetryableFailIdem

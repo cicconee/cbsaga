@@ -57,29 +57,36 @@ func (s *Service) CreateWithdrawal(
 	}
 
 	// Reserve the idempotency key
-	reserveTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return CreateWithdrawalResult{}, err
+	reserveTxFunc := func(ctx context.Context, tx pgx.Tx) (repo.ReserveIdemResult, error) {
+		return s.repo.ReserveIdemTx(ctx, tx, repo.ReserveIdemParams{
+			UserID:         v.UserID,
+			IdempotencyKey: v.IdempotencyKey,
+			RequestHash:    v.RequestHash,
+			WithdrawalID:   uuid.NewString(),
+			LeaseAttemptID: uuid.NewString(),
+			LeaseTTL:       30 * time.Second,
+			Now:            now,
+		})
 	}
-	defer func() { _ = reserveTx.Rollback(ctx) }()
+	idemRow, err := postgres.WithTxRetryResult(
+		ctx,
+		s.db,
+		pgx.TxOptions{},
+		"idempotency/reserve",
+		reserveIdemRetryPolicy(),
+		reserveTxFunc,
+	)
+	if err != nil {
+		var cu postgres.CommitUnknownError
 
-	idemRow, err := s.repo.ReserveIdemTx(ctx, reserveTx, repo.ReserveIdemParams{
-		UserID:         v.UserID,
-		IdempotencyKey: v.IdempotencyKey,
-		RequestHash:    v.RequestHash,
-		WithdrawalID:   uuid.NewString(),
-		LeaseAttemptID: uuid.NewString(),
-		LeaseTTL:       30 * time.Second,
-		Now:            now,
-	})
-	if err != nil {
-		if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
+		switch {
+		case errors.Is(err, repo.ErrIdempotencyKeyReuse):
 			return CreateWithdrawalResult{}, ErrInvalidIdempotencyKeyReuse
+		case errors.As(err, &cu):
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		default:
+			return CreateWithdrawalResult{}, err
 		}
-		return CreateWithdrawalResult{}, err
-	}
-	if err := reserveTx.Commit(ctx); err != nil {
-		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
