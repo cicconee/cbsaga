@@ -173,5 +173,5 @@ func (i *Identity) handleMessage(ctx context.Context, m kafka.Message) error {
 		"trace_id", traceID,
 	)
 
-	return nil
+	return i.r.CommitMessages(ctx, m)
 }
