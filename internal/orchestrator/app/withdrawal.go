@@ -10,7 +10,6 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
-	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
@@ -304,42 +303,26 @@ func (s *Service) failIdempotencyWithRetry(
 	grpcCode int,
 	p finalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
-	var outcome repo.FinalizeOutcome
-
-	finalize := func() error {
-		var o repo.FinalizeOutcome
-
-		err := postgres.WithTx(ctx, s.db, pgx.TxOptions{}, "idempotency/set_failed",
-			func(ctx context.Context, tx pgx.Tx) error {
-				got, err := s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
-					UserID:         p.userID,
-					IdempotencyKey: p.idemKey,
-					GRPCCode:       grpcCode,
-					Now:            p.now,
-					LeaseAttemptID: p.leaseAttemptID,
-					LeaseFence:     p.leaseFence,
-					Status:         orchestrator.IdemFailed,
-				})
-				if err != nil {
-					return err
-				}
-
-				o = got
-				return nil
-			})
-		if err != nil {
-			return err
-		}
-
-		outcome = o
-		return nil
+	txFunc := func(ctx context.Context, tx pgx.Tx) (repo.FinalizeOutcome, error) {
+		return s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
+			UserID:         p.userID,
+			IdempotencyKey: p.idemKey,
+			GRPCCode:       grpcCode,
+			Now:            p.now,
+			LeaseAttemptID: p.leaseAttemptID,
+			LeaseFence:     p.leaseFence,
+			Status:         orchestrator.IdemFailed,
+		})
 	}
 
-	if err := retry.Do(ctx, failIdemRetryPolicy(), finalize); err != nil {
-		return 0, err
-	}
-
-	return outcome, nil
+	return postgres.WithTxRetryResult[repo.FinalizeOutcome](
+		ctx,
+		s.db,
+		pgx.TxOptions{},
+		"idempotency/set_failed",
+		failIdemRetryPolicy(),
+		txFunc,
+	)
 }
 
 func (s *Service) reconcile(
