@@ -92,7 +92,6 @@ func (s *Service) CreateWithdrawal(
 			return s.reconcileAndRecover(
 				ctx,
 				key,
-				SubjectWithdrawalCreate,
 				StepReserveIdempotencyCommitTx,
 				err,
 				map[string]any{"db_op": cu.Op},
@@ -210,14 +209,7 @@ func (s *Service) CreateWithdrawal(
 			WithdrawalID: idemRow.WithdrawalID,
 		}
 
-		return s.reconcileAndRecover(
-			rctx,
-			key,
-			SubjectWithdrawalCreate,
-			StepCreateWithdrawalCommitTx,
-			trigger,
-			nil,
-		)
+		return s.reconcileAndRecover(rctx, key, StepCreateWithdrawalCommitTx, trigger, nil)
 	}
 
 	return CreateWithdrawalResult{
