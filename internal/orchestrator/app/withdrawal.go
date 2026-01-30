@@ -9,7 +9,6 @@ import (
 	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
-	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -79,14 +78,7 @@ func (s *Service) CreateWithdrawal(
 	)
 	if err != nil {
 		if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
-			return CreateWithdrawalResult{}, apperr.New(
-				apperr.CodeInvalidArgument,
-				SubjectWithdrawalCreate,
-				StepReserveIdempotencyTx,
-				"idempotency key cannot be reused with a different request",
-				false,
-				err,
-			)
+			return CreateWithdrawalResult{}, errInvalidArgument(StepReserveIdempotencyTx, err)
 		}
 
 		var cu postgres.CommitUnknownError
@@ -109,24 +101,10 @@ func (s *Service) CreateWithdrawal(
 
 		var bt postgres.BeginTxError
 		if errors.As(err, &bt) {
-			return CreateWithdrawalResult{}, apperr.New(
-				apperr.CodeInternal,
-				SubjectWithdrawalCreate,
-				StepReserveIdempotencyBeginTx,
-				"unable to process request; please retry",
-				true,
-				err,
-			)
+			return CreateWithdrawalResult{}, errInternal(StepReserveIdempotencyBeginTx, err)
 		}
 
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeInternal,
-			SubjectWithdrawalCreate,
-			StepReserveIdempotencyTx,
-			"unable to process request; please retry",
-			true,
-			err,
-		)
+		return CreateWithdrawalResult{}, errInternal(StepReserveIdempotencyTx, err)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db

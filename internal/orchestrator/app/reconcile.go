@@ -6,7 +6,6 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
-	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -41,9 +40,7 @@ func (s *Service) reconcileAndRecover(
 			"withdrawal_id", key.WithdrawalID,
 			"subject", subject,
 			"step", step,
-		}
-		if triggerErr != nil {
-			fields = append(fields, "trigger_err", triggerErr)
+			"trigger_err", triggerErr,
 		}
 		for k, v := range extra {
 			fields = append(fields, k, v)
@@ -63,16 +60,8 @@ func (s *Service) reconcileAndRecover(
 		return res, nil
 	}
 
-	// did not recover, need an apperr.Error for the handler
-	ae := apperr.New(
-		apperr.CodeInternal,
-		subject,
-		step,
-		"unable to process request; please retry",
-		true,
-		triggerErr,
-	)
-	ae.Fields = map[string]any{
+	// did not recover
+	fields := map[string]any{
 		"trace_id":        key.TraceID,
 		"user_id":         key.UserID,
 		"idempotency_key": key.IdemKey,
@@ -81,10 +70,10 @@ func (s *Service) reconcileAndRecover(
 		"reconcile_err":   rerr,
 	}
 	for k, v := range extra {
-		ae.Fields[k] = v
+		fields[k] = v
 	}
 
-	return CreateWithdrawalResult{}, ae
+	return CreateWithdrawalResult{}, errInternalWithFields(step, triggerErr, fields)
 }
 
 func (s *Service) failAndReconcile(
@@ -97,14 +86,7 @@ func (s *Service) failAndReconcile(
 	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
 	if err == nil && outcome == repo.FinalizeApplied {
 		// Finalized applied successfully (marked FAILED), so return the domain error.
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeFailed,
-			SubjectWithdrawalCreate,
-			causeStep,
-			"failed to create a withdrawal; resubmit a new request",
-			false,
-			causeErr,
-		)
+		return CreateWithdrawalResult{}, errFailed(causeStep, causeErr)
 	}
 
 	key := reconcileKey{
@@ -138,14 +120,7 @@ func (s *Service) reconcile(
 		IdempotencyKey: idemKey,
 	})
 	if err != nil {
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeInternal,
-			SubjectWithdrawalCreate,
-			StepReconcileGetIdempotency,
-			"unable to process request; please retry",
-			true,
-			err,
-		)
+		return CreateWithdrawalResult{}, errInternal(StepReconcileGetIdempotency, err)
 	}
 
 	switch idemRow.Status {
@@ -154,44 +129,21 @@ func (s *Service) reconcile(
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil {
-			return CreateWithdrawalResult{}, apperr.New(
-				apperr.CodeInternal,
-				SubjectWithdrawalCreate,
-				StepReconcileGetWithdrawal,
-				"unable to process request; please retry",
-				true,
-				err,
-			)
+			return CreateWithdrawalResult{}, errInternal(StepReconcileGetWithdrawal, err)
 		}
 
 		return CreateWithdrawalResult{
 			WithdrawalID: w.WithdrawalID,
 			Status:       domain.WithdrawalStatusRequested,
 		}, nil
-
 	case domain.IdemFailed:
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeFailed,
-			SubjectWithdrawalCreate,
-			StepReconcileIdempotencyFailed,
-			"request failed; resubmit a new request",
-			false,
-			nil,
-		)
-
+		return CreateWithdrawalResult{}, errFailed(StepReconcileIdempotencyFailed, nil)
 	case domain.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return CreateWithdrawalResult{}, apperr.New(
-				apperr.CodeInternal,
-				SubjectWithdrawalCreate,
-				StepReconcileWithdrawalInProgress,
-				"unable to process request; please retry",
-				true,
-				err,
-			)
+			return CreateWithdrawalResult{}, errInternal(StepReconcileWithdrawalInProgress, err)
 		}
 		if err == nil {
 			return CreateWithdrawalResult{
@@ -200,23 +152,11 @@ func (s *Service) reconcile(
 			}, nil
 		}
 
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeRetryableConflict,
-			SubjectWithdrawalCreate,
+		return CreateWithdrawalResult{}, errRetryableConflict(
 			StepReconcileIdempotencyInProgress,
-			"request is still in progress; please retry",
-			true,
 			err,
 		)
-
 	default:
-		return CreateWithdrawalResult{}, apperr.New(
-			apperr.CodeInternal,
-			SubjectWithdrawalCreate,
-			StepReconcileUnknownIdemStatus,
-			"unable to process request; please retry",
-			true,
-			nil,
-		)
+		return CreateWithdrawalResult{}, errInternal(StepReconcileUnknownIdemStatus, nil)
 	}
 }
