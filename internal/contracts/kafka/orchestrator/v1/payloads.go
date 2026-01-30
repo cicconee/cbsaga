@@ -1,4 +1,4 @@
-package orchestrator
+package orchestratorv1
 
 import "errors"
 

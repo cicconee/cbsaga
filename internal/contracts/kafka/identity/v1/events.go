@@ -1,13 +1,4 @@
-package identity
-
-const (
-	AggregateTypeIdentity = "identity"
-)
-
-const (
-	IdentityStatusVerified = "VERIFIED"
-	IdentityStatusRejected = "REJECTED"
-)
+package identityv1
 
 const (
 	EventTypeIdentityRequested = "VerifyIdentityRequested"

@@ -1,4 +1,4 @@
-package identity
+package identityv1
 
 import "errors"
 

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 
+	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
-	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -149,7 +149,7 @@ func (s *Service) reconcile(
 	}
 
 	switch idemRow.Status {
-	case orchestrator.IdemCompleted:
+	case domain.IdemCompleted:
 		w, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
@@ -166,10 +166,10 @@ func (s *Service) reconcile(
 
 		return CreateWithdrawalResult{
 			WithdrawalID: w.WithdrawalID,
-			Status:       orchestrator.WithdrawalStatusRequested,
+			Status:       domain.WithdrawalStatusRequested,
 		}, nil
 
-	case orchestrator.IdemFailed:
+	case domain.IdemFailed:
 		return CreateWithdrawalResult{}, apperr.New(
 			apperr.CodeFailed,
 			SubjectWithdrawalCreate,
@@ -179,7 +179,7 @@ func (s *Service) reconcile(
 			nil,
 		)
 
-	case orchestrator.IdemInProgress:
+	case domain.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
@@ -196,7 +196,7 @@ func (s *Service) reconcile(
 		if err == nil {
 			return CreateWithdrawalResult{
 				WithdrawalID: existingWithdrawal.WithdrawalID,
-				Status:       orchestrator.WithdrawalStatusRequested,
+				Status:       domain.WithdrawalStatusRequested,
 			}, nil
 		}
 

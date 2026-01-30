@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
-	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
 )
@@ -63,7 +63,7 @@ func (r *Repo) CreateWithdrawalTx(
 		p.Asset,
 		p.AmountMinor,
 		p.DestinationAddr,
-		orchestrator.WithdrawalStatusRequested,
+		domain.WithdrawalStatusRequested,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -90,8 +90,8 @@ func (r *Repo) CreateWithdrawalTx(
 	`,
 		p.SagaID,
 		p.WithdrawalID,
-		orchestrator.SagaStateStarted,
-		orchestrator.SagaStepIdentityCheck,
+		domain.SagaStateStarted,
+		domain.SagaStepIdentityCheck,
 	)
 	if err != nil {
 		return CreateWithdrawalResult{}, err
@@ -118,7 +118,7 @@ func (r *Repo) CreateWithdrawalTx(
 			$6
 		)
 	`,
-			orchestrator.AggregateTypeWithdrawal,
+			domain.AggregateTypeWithdrawal,
 			p.WithdrawalID,
 			evt.EventType,
 			evt.Payload,
@@ -132,7 +132,7 @@ func (r *Repo) CreateWithdrawalTx(
 
 	return CreateWithdrawalResult{
 		WithdrawalID: p.WithdrawalID,
-		Status:       orchestrator.WithdrawalStatusRequested,
+		Status:       domain.WithdrawalStatusRequested,
 	}, nil
 }
 

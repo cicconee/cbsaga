@@ -5,13 +5,14 @@ import (
 	"errors"
 	"time"
 
+	identity "github.com/cicconee/cbsaga/internal/contracts/kafka/identity/v1"
+	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
+	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
-	"github.com/cicconee/cbsaga/internal/shared/identity"
-	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -270,7 +271,7 @@ func (s *Service) completeIdempotency(
 		Now:            p.now,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
-		Status:         orchestrator.IdemCompleted,
+		Status:         domain.IdemCompleted,
 	})
 }
 
@@ -287,7 +288,7 @@ func (s *Service) failIdempotencyWithRetry(
 			Now:            p.now,
 			LeaseAttemptID: p.leaseAttemptID,
 			LeaseFence:     p.leaseFence,
-			Status:         orchestrator.IdemFailed,
+			Status:         domain.IdemFailed,
 		})
 	}
 

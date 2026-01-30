@@ -5,11 +5,12 @@ import (
 	"errors"
 	"time"
 
+	identity "github.com/cicconee/cbsaga/internal/contracts/kafka/identity/v1"
+	"github.com/cicconee/cbsaga/internal/identity/domain"
 	"github.com/cicconee/cbsaga/internal/identity/repo"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/cicconee/cbsaga/internal/platform/messaging"
-	"github.com/cicconee/cbsaga/internal/shared/identity"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,7 +85,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		// Mocking identity verification for now. Maybe implement this or add some random REJECTED
 		// and delays?
-		status := identity.IdentityStatusVerified
+		status := domain.IdentityStatusVerified
 		outboxType := identity.EventTypeIdentityVerified
 		var reason *string
 

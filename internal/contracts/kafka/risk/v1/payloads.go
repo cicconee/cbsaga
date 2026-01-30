@@ -1,4 +1,4 @@
-package risk
+package riskv1
 
 import "errors"
 

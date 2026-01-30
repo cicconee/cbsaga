@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cicconee/cbsaga/internal/shared/identity"
-	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
-	"github.com/cicconee/cbsaga/internal/shared/risk"
+	identity "github.com/cicconee/cbsaga/internal/contracts/kafka/identity/v1"
+	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
+	risk "github.com/cicconee/cbsaga/internal/contracts/kafka/risk/v1"
+	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -134,7 +135,7 @@ func (r *Repo) ApplyIdentityResultTx(
 			$6
 		)
 	`,
-		orchestrator.AggregateTypeWithdrawal,
+		domain.AggregateTypeWithdrawal,
 		p.WithdrawalID,
 		p.OutboxEventType,
 		p.OutboxPayload,

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
-	"github.com/cicconee/cbsaga/internal/shared/orchestrator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -83,7 +83,7 @@ func (r *Repo) ReserveIdemTx(
 		p.IdempotencyKey,
 		p.WithdrawalID,
 		p.RequestHash,
-		orchestrator.IdemInProgress,
+		domain.IdemInProgress,
 		p.Now,
 		p.LeaseAttemptID,
 		p.Now.Add(p.LeaseTTL),
@@ -96,7 +96,7 @@ func (r *Repo) ReserveIdemTx(
 	if inserted {
 		return ReserveIdemResult{
 			Owned:          true,
-			Status:         orchestrator.IdemInProgress,
+			Status:         domain.IdemInProgress,
 			WithdrawalID:   p.WithdrawalID,
 			RequestHash:    p.RequestHash,
 			LeaseOwner:     p.LeaseAttemptID,
@@ -149,7 +149,7 @@ func (r *Repo) ReserveIdemTx(
 		return ReserveIdemResult{}, ErrIdempotencyKeyReuse
 	}
 
-	if status == orchestrator.IdemInProgress && !leaseExpiresAt.After(p.Now) {
+	if status == domain.IdemInProgress && !leaseExpiresAt.After(p.Now) {
 		var newLeaseFence int64
 		var newWithdrawalID string
 		var newRequestHash string
@@ -175,7 +175,7 @@ func (r *Repo) ReserveIdemTx(
 		`,
 			p.UserID,
 			p.IdempotencyKey,
-			orchestrator.IdemInProgress,
+			domain.IdemInProgress,
 			p.LeaseAttemptID,
 			p.Now.Add(p.LeaseTTL),
 			p.Now,
@@ -190,7 +190,7 @@ func (r *Repo) ReserveIdemTx(
 			return ReserveIdemResult{
 				Owned:          true,
 				StoleOwnership: true,
-				Status:         orchestrator.IdemInProgress,
+				Status:         domain.IdemInProgress,
 				WithdrawalID:   newWithdrawalID,
 				RequestHash:    newRequestHash,
 				LeaseOwner:     p.LeaseAttemptID,
@@ -347,7 +347,7 @@ func (r *Repo) FinalizeIdemTx(
 		p.UserID,
 		p.IdempotencyKey,
 		p.LeaseAttemptID,
-		orchestrator.IdemInProgress,
+		domain.IdemInProgress,
 		p.LeaseFence,
 	)
 	if err != nil {
@@ -362,7 +362,7 @@ func (r *Repo) FinalizeIdemTx(
 	if err != nil {
 		return 0, err
 	}
-	if s.Status == orchestrator.IdemCompleted || s.Status == orchestrator.IdemFailed {
+	if s.Status == domain.IdemCompleted || s.Status == domain.IdemFailed {
 		return FinalizeAlreadyFinalized, nil
 	}
 	return 0, ErrLostLeaseOwnership

@@ -1,13 +1,4 @@
-package risk
-
-const (
-	AggregateTypeRisk = "risk"
-)
-
-const (
-	RiskStatusApproved = "APPROVED"
-	RiskStatusRejected = "REJECTED"
-)
+package riskv1
 
 const (
 	EventTypeRiskCheckRequested = "RiskCheckRequested"
