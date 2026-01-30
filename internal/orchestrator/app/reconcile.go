@@ -17,6 +17,40 @@ type reconcileKey struct {
 	WithdrawalID string
 }
 
+func (s *Service) failAndReconcile(
+	ctx context.Context,
+	grpcCode int,
+	p finalizeIdemParams,
+	causeStep string,
+	causeErr error,
+) (CreateWithdrawalResult, error) {
+	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
+	if err == nil && outcome == repo.FinalizeApplied {
+		// Finalized applied successfully (marked FAILED), so return the domain error.
+		return CreateWithdrawalResult{}, errFailed(causeStep, causeErr)
+	}
+
+	key := reconcileKey{
+		TraceID:      p.traceID,
+		UserID:       p.userID,
+		IdemKey:      p.idemKey,
+		WithdrawalID: p.withdrawalID,
+	}
+	return s.reconcileAndRecover(
+		ctx,
+		key,
+		SubjectWithdrawalCreate,
+		StepFinalizeIdempotencyFailed,
+		err,
+		map[string]any{
+			"finalize_outcome": outcome,
+			"grpc_code":        grpcCode,
+			"cause_step":       causeStep,
+			"cause_err":        causeErr,
+		},
+	)
+}
+
 func (s *Service) reconcileAndRecover(
 	ctx context.Context,
 	key reconcileKey,
@@ -74,40 +108,6 @@ func (s *Service) reconcileAndRecover(
 	}
 
 	return CreateWithdrawalResult{}, errInternalWithFields(step, triggerErr, fields)
-}
-
-func (s *Service) failAndReconcile(
-	ctx context.Context,
-	grpcCode int,
-	p finalizeIdemParams,
-	causeStep string,
-	causeErr error,
-) (CreateWithdrawalResult, error) {
-	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
-	if err == nil && outcome == repo.FinalizeApplied {
-		// Finalized applied successfully (marked FAILED), so return the domain error.
-		return CreateWithdrawalResult{}, errFailed(causeStep, causeErr)
-	}
-
-	key := reconcileKey{
-		TraceID:      p.traceID,
-		UserID:       p.userID,
-		IdemKey:      p.idemKey,
-		WithdrawalID: p.withdrawalID,
-	}
-	return s.reconcileAndRecover(
-		ctx,
-		key,
-		SubjectWithdrawalCreate,
-		StepFinalizeIdempotencyFailed,
-		err,
-		map[string]any{
-			"finalize_outcome": outcome,
-			"grpc_code":        grpcCode,
-			"cause_step":       causeStep,
-			"cause_err":        causeErr,
-		},
-	)
 }
 
 func (s *Service) reconcile(
