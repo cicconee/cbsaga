@@ -5,9 +5,10 @@ import "fmt"
 type Code string
 
 const (
-	CodeBeginDbTx       Code = "BEGIN_DB_TX"
-	CodeCommitDbUnknown Code = "COMMIT_DB_UNKNOWN"
-	CodeInternal        Code = "INTERNAL"
+	CodeInternal          Code = "INTERNAL"
+	CodeInvalidArgument   Code = "INVALID_ARGUMENT"
+	CodeFailed            Code = "FAILED"
+	CodeRetryableConflict Code = "RETRYABLE_CONFLICT"
 )
 
 type Error struct {

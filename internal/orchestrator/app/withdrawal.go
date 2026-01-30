@@ -3,10 +3,10 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -77,16 +77,55 @@ func (s *Service) CreateWithdrawal(
 		reserveTxFunc,
 	)
 	if err != nil {
-		var cu postgres.CommitUnknownError
-
-		switch {
-		case errors.Is(err, repo.ErrIdempotencyKeyReuse):
-			return CreateWithdrawalResult{}, ErrInvalidIdempotencyKeyReuse
-		case errors.As(err, &cu):
-			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
-		default:
-			return CreateWithdrawalResult{}, err
+		if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
+			return CreateWithdrawalResult{}, apperr.New(
+				apperr.CodeInvalidArgument,
+				SubjectWithdrawalCreate,
+				StepReserveIdempotencyTx,
+				"idempotency key cannot be reused with a different request",
+				false,
+				err,
+			)
 		}
+
+		var cu postgres.CommitUnknownError
+		if errors.As(err, &cu) {
+			key := reconcileKey{
+				TraceID: v.TraceID,
+				UserID:  v.UserID,
+				IdemKey: v.IdempotencyKey,
+			}
+
+			return s.reconcileAndRecover(
+				ctx,
+				key,
+				SubjectWithdrawalCreate,
+				StepReserveIdempotencyCommitTx,
+				err,
+				map[string]any{"db_op": cu.Op},
+			)
+		}
+
+		var bt postgres.BeginTxError
+		if errors.As(err, &bt) {
+			return CreateWithdrawalResult{}, apperr.New(
+				apperr.CodeInternal,
+				SubjectWithdrawalCreate,
+				StepReserveIdempotencyBeginTx,
+				"unable to process request; please retry",
+				true,
+				err,
+			)
+		}
+
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeInternal,
+			SubjectWithdrawalCreate,
+			StepReserveIdempotencyTx,
+			"unable to process request; please retry",
+			true,
+			err,
+		)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
@@ -108,7 +147,7 @@ func (s *Service) CreateWithdrawal(
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawalBeginTx, err)
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
 
@@ -118,14 +157,14 @@ func (s *Service) CreateWithdrawal(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams)
+		return s.failAndReconcile(ctx, 13, finalParams, StepEncodeIdentityPayload, err)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: idemRow.WithdrawalID,
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams)
+		return s.failAndReconcile(ctx, 13, finalParams, StepEncodeWithdrawalPayload, err)
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
@@ -154,7 +193,7 @@ func (s *Service) CreateWithdrawal(
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
-		return s.failAndReconcile(ctx, 13, finalParams)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawalTx, err)
 	}
 
 	// Mark the idempotency key as completed status.
@@ -163,7 +202,7 @@ func (s *Service) CreateWithdrawal(
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
-		return s.failAndReconcile(ctx, 13, finalParams)
+		return s.failAndReconcile(ctx, 13, finalParams, StepFinalizeIdempotencyCompleted, err)
 	}
 
 	// This current run took too long from the moment of ownership till now, that
@@ -174,22 +213,31 @@ func (s *Service) CreateWithdrawal(
 
 	// Commit the atomic transaction: finalizes idempotency key status and inserts withdrawal.
 	if err := workTx.Commit(ctx); err != nil {
+		trigger := postgres.CommitUnknownError{
+			Op:       "withdrawal/work_tx_commit",
+			Err:      err,
+			Duration: time.Since(now), // place holder until wrap in WithTx
+			CtxErr:   ctx.Err(),
+		}
+
 		// Outcome unknown
 		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		res, rerr := s.reconcile(rctx, v.UserID, v.IdempotencyKey)
-		if rerr == nil {
-			return res, nil
+		key := reconcileKey{
+			TraceID:      v.TraceID,
+			UserID:       v.UserID,
+			IdemKey:      v.IdempotencyKey,
+			WithdrawalID: idemRow.WithdrawalID,
 		}
 
-		if errors.Is(rerr, ErrIdempotencyInProgress) {
-			return CreateWithdrawalResult{}, fmt.Errorf("commit outcome unknown; please retry")
-		}
-
-		return CreateWithdrawalResult{}, fmt.Errorf(
-			"commit outcome unknown; reconcile failed: %v; please retry",
-			rerr,
+		return s.reconcileAndRecover(
+			rctx,
+			key,
+			SubjectWithdrawalCreate,
+			StepCreateWithdrawalCommitTx,
+			trigger,
+			nil,
 		)
 	}
 
@@ -226,83 +274,121 @@ func (s *Service) completeIdempotency(
 	})
 }
 
+type reconcileKey struct {
+	TraceID      string
+	UserID       string
+	IdemKey      string
+	WithdrawalID string
+}
+
 func (s *Service) failAndReconcile(
 	ctx context.Context,
 	grpcCode int,
 	p finalizeIdemParams,
+	causeStep string,
+	causeErr error,
 ) (CreateWithdrawalResult, error) {
 	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
 	if err == nil && outcome == repo.FinalizeApplied {
 		// Finalized applied successfully (marked FAILED), so return the domain error.
-		return CreateWithdrawalResult{}, ErrCreateWithdrawalFailed
-	}
-
-	res, rerr := s.reconcile(ctx, p.userID, p.idemKey)
-
-	if rerr != nil {
-		return CreateWithdrawalResult{}, fmt.Errorf(
-			"reconcile failed after idempotency finalize attempt (outcome=%v): %w",
-			outcome,
-			errors.Join(err, rerr),
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeFailed,
+			SubjectWithdrawalCreate,
+			causeStep,
+			"failed to create a withdrawal; resubmit a new request",
+			false,
+			causeErr,
 		)
 	}
 
-	var cuErr postgres.CommitUnknownError
-	var btErr postgres.BeginTxError
+	key := reconcileKey{
+		TraceID:      p.traceID,
+		UserID:       p.userID,
+		IdemKey:      p.idemKey,
+		WithdrawalID: p.withdrawalID,
+	}
+	return s.reconcileAndRecover(
+		ctx,
+		key,
+		SubjectWithdrawalCreate,
+		StepFinalizeIdempotencyFailed,
+		err,
+		map[string]any{
+			"finalize_outcome": outcome,
+			"grpc_code":        grpcCode,
+			"cause_step":       causeStep,
+			"cause_err":        causeErr,
+		},
+	)
+}
 
-	switch {
-	case err != nil && errors.As(err, &cuErr):
-		s.log.Warn("reconcile recovered after idempotency finalize commit outcome unknown",
-			"trace_id", p.traceID,
-			"user_id", p.userID,
-			"idempotency_key", p.idemKey,
-			"withdrawal_id", p.withdrawalID,
-			"op", cuErr.Op,
-			"grpc_code", grpcCode,
-			"tx_duration", cuErr.Duration,
-			"ctx_err", cuErr.CtxErr,
-			"finalize_err", err,
-		)
-	case err != nil && errors.As(err, &btErr):
-		s.log.Warn("reconcile recovered after idempotency finalize begin tx failure",
-			"trace_id", p.traceID,
-			"user_id", p.userID,
-			"idempotency_key", p.idemKey,
-			"withdrawal_id", p.withdrawalID,
-			"op", btErr.Op,
-			"grpc_code", grpcCode,
-			"ctx_err", btErr.CtxErr,
-			"finalize_err", err,
-		)
-	case err != nil && errors.Is(err, repo.ErrLostLeaseOwnership):
-		s.log.Debug("reconcile recovered after idempotency finalize lost ownership",
-			"trace_id", p.traceID,
-			"user_id", p.userID,
-			"idempotency_key", p.idemKey,
-			"withdrawal_id", p.withdrawalID,
-			"grpc_code", grpcCode,
-			"finalize_err", err,
-		)
-	case err == nil && outcome == repo.FinalizeAlreadyFinalized:
-		s.log.Debug("idempotency already finalized: returned reconciled response",
-			"trace_id", p.traceID,
-			"user_id", p.userID,
-			"idempotency_key", p.idemKey,
-			"withdrawal_id", p.withdrawalID,
-			"grpc_code", grpcCode,
-		)
-	default:
-		s.log.Warn("reconcile recovered after idempotency finalize failure",
-			"trace_id", p.traceID,
-			"user_id", p.userID,
-			"idempotency_key", p.idemKey,
-			"withdrawal_id", p.withdrawalID,
-			"grpc_code", grpcCode,
-			"finalize_err", err,
-		)
+func (s *Service) reconcileAndRecover(
+	ctx context.Context,
+	key reconcileKey,
+	subject string,
+	step string,
+	triggerErr error,
+	extra map[string]any,
+) (CreateWithdrawalResult, error) {
+	if extra == nil {
+		extra = make(map[string]any)
 	}
 
-	return res, nil
+	// Try to recover
+	res, rerr := s.reconcile(ctx, key.UserID, key.IdemKey)
+	if rerr == nil {
+		// Log recovery
+		fields := []any{
+			"trace_id", key.TraceID,
+			"user_id", key.UserID,
+			"idempotency_key", key.IdemKey,
+			"withdrawal_id", key.WithdrawalID,
+			"subject", subject,
+			"step", step,
+		}
+		if triggerErr != nil {
+			fields = append(fields, "trigger_err", triggerErr)
+		}
+		for k, v := range extra {
+			fields = append(fields, k, v)
+		}
+
+		var cu postgres.CommitUnknownError
+		var bt postgres.BeginTxError
+		switch {
+		case triggerErr != nil && errors.As(triggerErr, &cu):
+			s.log.Warn("recovered via reconcile after db commit outcome unknown", fields...)
+		case triggerErr != nil && errors.As(triggerErr, &bt):
+			s.log.Warn("recovered via reconcile after db begin tx failure", fields...)
+		default:
+			s.log.Debug("recovered via reconcile", fields...)
+		}
+
+		return res, nil
+	}
+
+	// did not recover, need an apperr.Error for the handler
+	ae := apperr.New(
+		apperr.CodeInternal,
+		subject,
+		step,
+		"unable to process request; please retry",
+		true,
+		triggerErr,
+	)
+	ae.Fields = map[string]any{
+		"trace_id":        key.TraceID,
+		"user_id":         key.UserID,
+		"idempotency_key": key.IdemKey,
+		"withdrawal_id":   key.WithdrawalID,
+		"trigger_err":     triggerErr,
+		"reconcile_err":   rerr,
+	}
+	for k, v := range extra {
+		ae.Fields[k] = v
+	}
+
+	return CreateWithdrawalResult{}, ae
 }
 
 func (s *Service) failIdempotencyWithRetry(
@@ -334,50 +420,68 @@ func (s *Service) failIdempotencyWithRetry(
 
 func (s *Service) reconcile(
 	ctx context.Context,
-	userID, idemKey string,
+	userID string,
+	idemKey string,
 ) (CreateWithdrawalResult, error) {
 	idemRow, err := s.repo.GetIdem(ctx, s.db, repo.GetIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return CreateWithdrawalResult{}, ErrIdempotencyInProgress
-		}
-		return CreateWithdrawalResult{}, err
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeInternal,
+			SubjectWithdrawalCreate,
+			StepReconcileGetIdempotency,
+			"unable to process request; please retry",
+			true,
+			err,
+		)
 	}
 
 	switch idemRow.Status {
-
 	case orchestrator.IdemCompleted:
 		w, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CreateWithdrawalResult{}, fmt.Errorf(
-					"invariant violated: idempotency COMPLETED but withdrawal missing (withdrawal_id=%s)",
-					idemRow.WithdrawalID,
-				)
-			}
-			return CreateWithdrawalResult{}, err
+			return CreateWithdrawalResult{}, apperr.New(
+				apperr.CodeInternal,
+				SubjectWithdrawalCreate,
+				StepReconcileGetWithdrawal,
+				"unable to process request; please retry",
+				true,
+				err,
+			)
 		}
+
 		return CreateWithdrawalResult{
 			WithdrawalID: w.WithdrawalID,
 			Status:       orchestrator.WithdrawalStatusRequested,
 		}, nil
 
 	case orchestrator.IdemFailed:
-		return CreateWithdrawalResult{}, fmt.Errorf(
-			"previous attempt failed (grpc_code=%d)",
-			idemRow.GRPCCode,
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeFailed,
+			SubjectWithdrawalCreate,
+			StepReconcileIdempotencyFailed,
+			"request failed; resubmit a new request",
+			false,
+			nil,
 		)
+
 	case orchestrator.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return CreateWithdrawalResult{}, err
+			return CreateWithdrawalResult{}, apperr.New(
+				apperr.CodeInternal,
+				SubjectWithdrawalCreate,
+				StepReconcileWithdrawalInProgress,
+				"unable to process request; please retry",
+				true,
+				err,
+			)
 		}
 		if err == nil {
 			return CreateWithdrawalResult{
@@ -385,11 +489,24 @@ func (s *Service) reconcile(
 				Status:       orchestrator.WithdrawalStatusRequested,
 			}, nil
 		}
-		return CreateWithdrawalResult{}, ErrIdempotencyInProgress
+
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeRetryableConflict,
+			SubjectWithdrawalCreate,
+			StepReconcileIdempotencyInProgress,
+			"request is still in progress; please retry",
+			true,
+			err,
+		)
+
 	default:
-		return CreateWithdrawalResult{}, fmt.Errorf(
-			"unknown idempotency status: %s",
-			idemRow.Status,
+		return CreateWithdrawalResult{}, apperr.New(
+			apperr.CodeInternal,
+			SubjectWithdrawalCreate,
+			StepReconcileUnknownIdemStatus,
+			"unable to process request; please retry",
+			true,
+			nil,
 		)
 	}
 }
