@@ -6,6 +6,7 @@ import (
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -99,13 +100,24 @@ func (s *Service) reconcileAndRecover(
 		"withdrawal_id":        key.WithdrawalID,
 		"trigger_recover_step": triggerStep,
 		"trigger_recover_err":  triggerErr,
-		"reconcile_err":        rerr,
 	}
 	for k, v := range extra {
 		fields[k] = v
 	}
 
-	return CreateWithdrawalResult{}, errInternalWithFields(triggerStep, triggerErr, fields)
+	var ae *apperr.Error
+	if errors.As(rerr, &ae) {
+		if ae.Fields == nil {
+			ae.Fields = map[string]any{}
+		}
+		for k, v := range fields {
+			ae.Fields[k] = v
+		}
+		return CreateWithdrawalResult{}, ae
+	}
+
+	rerr = errors.Join(triggerErr, rerr)
+	return CreateWithdrawalResult{}, errInternalWithFields(StepReconcile, rerr, fields)
 }
 
 func (s *Service) reconcile(
