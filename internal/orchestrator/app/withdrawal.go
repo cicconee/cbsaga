@@ -78,7 +78,7 @@ func (s *Service) CreateWithdrawal(
 	)
 	if err != nil {
 		if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
-			return CreateWithdrawalResult{}, errInvalidArgument(StepReserveIdempotencyTx, err)
+			return CreateWithdrawalResult{}, errInvalidArgument(StepReserveIdempotency, err)
 		}
 
 		var cu postgres.CommitUnknownError
@@ -92,18 +92,13 @@ func (s *Service) CreateWithdrawal(
 			return s.reconcileAndRecover(
 				ctx,
 				key,
-				StepReserveIdempotencyCommitTx,
+				StepReserveIdempotency,
 				err,
 				map[string]any{"db_op": cu.Op},
 			)
 		}
 
-		var bt postgres.BeginTxError
-		if errors.As(err, &bt) {
-			return CreateWithdrawalResult{}, errInternal(StepReserveIdempotencyBeginTx, err)
-		}
-
-		return CreateWithdrawalResult{}, errInternal(StepReserveIdempotencyTx, err)
+		return CreateWithdrawalResult{}, errInternal(StepReserveIdempotency, err)
 	}
 
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
@@ -125,7 +120,7 @@ func (s *Service) CreateWithdrawal(
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawalBeginTx, err)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawal, err)
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
 
@@ -135,14 +130,14 @@ func (s *Service) CreateWithdrawal(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams, StepEncodeIdentityPayload, err)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawal, err)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: idemRow.WithdrawalID,
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		return s.failAndReconcile(ctx, 13, finalParams, StepEncodeWithdrawalPayload, err)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawal, err)
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
@@ -171,7 +166,7 @@ func (s *Service) CreateWithdrawal(
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
-		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawalTx, err)
+		return s.failAndReconcile(ctx, 13, finalParams, StepCreateWithdrawal, err)
 	}
 
 	// Mark the idempotency key as completed status.
@@ -180,7 +175,7 @@ func (s *Service) CreateWithdrawal(
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
-		return s.failAndReconcile(ctx, 13, finalParams, StepFinalizeIdempotencyCompleted, err)
+		return s.failAndReconcile(ctx, 13, finalParams, StepFinalizeIdempotency, err)
 	}
 
 	// This current run took too long from the moment of ownership till now, that
@@ -209,7 +204,7 @@ func (s *Service) CreateWithdrawal(
 			WithdrawalID: idemRow.WithdrawalID,
 		}
 
-		return s.reconcileAndRecover(rctx, key, StepCreateWithdrawalCommitTx, trigger, nil)
+		return s.reconcileAndRecover(rctx, key, StepCreateWithdrawal, trigger, nil)
 	}
 
 	return CreateWithdrawalResult{

@@ -39,7 +39,7 @@ func (s *Service) failAndReconcile(
 	return s.reconcileAndRecover(
 		ctx,
 		key,
-		StepFinalizeIdempotencyFailed,
+		StepFinalizeIdempotency,
 		err,
 		map[string]any{
 			"finalize_outcome":  outcome,
@@ -118,7 +118,7 @@ func (s *Service) reconcile(
 		IdempotencyKey: idemKey,
 	})
 	if err != nil {
-		return CreateWithdrawalResult{}, errInternal(StepReconcileGetIdempotency, err)
+		return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
 	}
 
 	switch idemRow.Status {
@@ -127,7 +127,7 @@ func (s *Service) reconcile(
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil {
-			return CreateWithdrawalResult{}, errInternal(StepReconcileGetWithdrawal, err)
+			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
 		}
 
 		return CreateWithdrawalResult{
@@ -135,13 +135,13 @@ func (s *Service) reconcile(
 			Status:       domain.WithdrawalStatusRequested,
 		}, nil
 	case domain.IdemFailed:
-		return CreateWithdrawalResult{}, errFailed(StepReconcileIdempotencyFailed, nil)
+		return CreateWithdrawalResult{}, errFailed(StepReconcile, nil)
 	case domain.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,
 		})
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return CreateWithdrawalResult{}, errInternal(StepReconcileWithdrawalInProgress, err)
+			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
 		}
 		if err == nil {
 			return CreateWithdrawalResult{
@@ -150,11 +150,8 @@ func (s *Service) reconcile(
 			}, nil
 		}
 
-		return CreateWithdrawalResult{}, errRetryableConflict(
-			StepReconcileIdempotencyInProgress,
-			err,
-		)
+		return CreateWithdrawalResult{}, errRetryableConflict(StepReconcile, err)
 	default:
-		return CreateWithdrawalResult{}, errInternal(StepReconcileUnknownIdemStatus, nil)
+		return CreateWithdrawalResult{}, errInternal(StepReconcile, nil)
 	}
 }
