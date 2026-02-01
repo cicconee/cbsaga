@@ -8,6 +8,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
+	"github.com/cicconee/cbsaga/internal/platform/fields"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -37,18 +38,13 @@ func (s *Service) failAndReconcile(
 		IdemKey:      p.idemKey,
 		WithdrawalID: p.withdrawalID,
 	}
-	return s.reconcileAndRecover(
-		ctx,
-		key,
-		StepFinalizeIdempotency,
-		err,
-		map[string]any{
-			"finalize_outcome":  outcome,
-			"grpc_code":         grpcCode,
-			"trigger_fail_step": triggerStep,
-			"trigger_fail_err":  triggerErr,
-		},
-	)
+	attrs := fields.New().
+		Int("finalize_outcome", int(outcome)).
+		Int("grpc_code", grpcCode).
+		Str("trigger_fail_step", triggerStep).
+		Error("trigger_fail_err", triggerErr)
+
+	return s.reconcileAndRecover(ctx, key, StepFinalizeIdempotency, err, attrs)
 }
 
 func (s *Service) reconcileAndRecover(
@@ -56,68 +52,46 @@ func (s *Service) reconcileAndRecover(
 	key reconcileKey,
 	triggerStep string,
 	triggerErr error,
-	extra map[string]any,
+	extra *fields.Attrs,
 ) (CreateWithdrawalResult, error) {
-	if extra == nil {
-		extra = make(map[string]any)
+	attrs := fields.New().
+		Str("trace_id", key.TraceID).
+		Str("user_id", key.UserID).
+		Str("idempotency_key", key.IdemKey).
+		Str("withdrawal_id", key.WithdrawalID).
+		Str("trigger_recover_step", triggerStep).
+		Error("trigger_recover_err", triggerErr)
+
+	if extra != nil {
+		attrs.Merge(extra)
 	}
 
 	// Try to recover
 	res, rerr := s.reconcile(ctx, key.UserID, key.IdemKey)
 	if rerr == nil {
 		// Log recovery
-		fields := []any{
-			"trace_id", key.TraceID,
-			"user_id", key.UserID,
-			"idempotency_key", key.IdemKey,
-			"withdrawal_id", key.WithdrawalID,
-			"trigger_recover_step", triggerStep,
-			"trigger_recover_err", triggerErr,
-		}
-		for k, v := range extra {
-			fields = append(fields, k, v)
-		}
-
 		var cu postgres.CommitUnknownError
 		var bt postgres.BeginTxError
 		switch {
 		case triggerErr != nil && errors.As(triggerErr, &cu):
-			s.log.Warn("recovered via reconcile after db commit outcome unknown", fields...)
+			s.log.Warn("recovered via reconcile after db commit outcome unknown", attrs.Args()...)
 		case triggerErr != nil && errors.As(triggerErr, &bt):
-			s.log.Warn("recovered via reconcile after db begin tx failure", fields...)
+			s.log.Warn("recovered via reconcile after db begin tx failure", attrs.Args()...)
 		default:
-			s.log.Debug("recovered via reconcile", fields...)
+			s.log.Debug("recovered via reconcile", attrs.Args()...)
 		}
 
 		return res, nil
 	}
 
 	// did not recover
-	fields := map[string]any{
-		"trace_id":             key.TraceID,
-		"user_id":              key.UserID,
-		"idempotency_key":      key.IdemKey,
-		"withdrawal_id":        key.WithdrawalID,
-		"trigger_recover_step": triggerStep,
-		"trigger_recover_err":  triggerErr,
-	}
-	for k, v := range extra {
-		fields[k] = v
-	}
-
 	var ae *apperr.Error
 	if errors.As(rerr, &ae) {
-		if ae.Fields == nil {
-			ae.Fields = map[string]any{}
-		}
-		for k, v := range fields {
-			ae.Fields[k] = v
-		}
-		return CreateWithdrawalResult{}, ae
+		return CreateWithdrawalResult{}, ae.WithFields(attrs)
 	}
 
 	rerr = errors.Join(triggerErr, rerr)
-	return CreateWithdrawalResult{}, errInternalWithFields(StepReconcile, rerr, fields)
+	return CreateWithdrawalResult{}, errInternal(StepReconcile, rerr).WithFields(attrs)
 }
 
 func (s *Service) reconcile(

@@ -11,6 +11,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
+	"github.com/cicconee/cbsaga/internal/platform/fields"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -94,7 +95,7 @@ func (s *Service) CreateWithdrawal(
 				key,
 				StepReserveIdempotency,
 				err,
-				map[string]any{"db_op": cu.Op},
+				fields.New().Str("db_op", cu.Op),
 			)
 		}
 

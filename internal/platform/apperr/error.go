@@ -1,6 +1,10 @@
 package apperr
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cicconee/cbsaga/internal/platform/fields"
+)
 
 type Code string
 
@@ -18,7 +22,26 @@ type Error struct {
 	Message   string // safe to expose
 	Retryable bool
 	Cause     error
-	Fields    map[string]any
+	Fields    *fields.Attrs
+}
+
+func (e *Error) WithField(k string, v any) *Error {
+	if e.Fields == nil {
+		e.Fields = fields.New()
+	}
+	e.Fields.Set(k, v)
+	return e
+}
+
+func (e *Error) WithFields(a *fields.Attrs) *Error {
+	if a == nil {
+		return e
+	}
+	if e.Fields == nil {
+		e.Fields = fields.New()
+	}
+	e.Fields.Merge(a)
+	return e
 }
 
 func (e *Error) Error() string {

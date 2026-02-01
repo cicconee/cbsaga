@@ -14,7 +14,7 @@ var (
 	ErrCreateWithdrawalFailed = errors.New("could not create withdrawal request")
 )
 
-func errInvalidArgument(step string, err error) error {
+func errInvalidArgument(step string, err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeInvalidArgument,
 		SubjectWithdrawalCreate,
@@ -25,7 +25,7 @@ func errInvalidArgument(step string, err error) error {
 	)
 }
 
-func errFailed(step string, err error) error {
+func errFailed(step string, err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeFailed,
 		SubjectWithdrawalCreate,
@@ -36,7 +36,7 @@ func errFailed(step string, err error) error {
 	)
 }
 
-func errInternal(step string, err error) error {
+func errInternal(step string, err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeInternal,
 		SubjectWithdrawalCreate,
@@ -47,24 +47,7 @@ func errInternal(step string, err error) error {
 	)
 }
 
-func errInternalWithFields(step string, err error, fields map[string]any) error {
-	ae := apperr.New(
-		apperr.CodeInternal,
-		SubjectWithdrawalCreate,
-		step,
-		"unable to process request; please retry",
-		true,
-		err,
-	)
-
-	if fields != nil {
-		ae.Fields = fields
-	}
-
-	return ae
-}
-
-func errRetryableConflict(step string, err error) error {
+func errRetryableConflict(step string, err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeRetryableConflict,
 		SubjectWithdrawalCreate,
