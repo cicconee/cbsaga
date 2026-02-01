@@ -22,25 +22,25 @@ type Error struct {
 	Message   string // safe to expose
 	Retryable bool
 	Cause     error
-	Fields    *fields.Attrs
+	Attrs     *fields.Attrs
 }
 
-func (e *Error) WithField(k string, v any) *Error {
-	if e.Fields == nil {
-		e.Fields = fields.New()
+func (e *Error) WithAttr(k string, v any) *Error {
+	if e.Attrs == nil {
+		e.Attrs = fields.New()
 	}
-	e.Fields.Set(k, v)
+	e.Attrs.Set(k, v)
 	return e
 }
 
-func (e *Error) WithFields(a *fields.Attrs) *Error {
+func (e *Error) WithAttrs(a *fields.Attrs) *Error {
 	if a == nil {
 		return e
 	}
-	if e.Fields == nil {
-		e.Fields = fields.New()
+	if e.Attrs == nil {
+		e.Attrs = fields.New()
 	}
-	e.Fields.Merge(a)
+	e.Attrs.Merge(a)
 	return e
 }
 

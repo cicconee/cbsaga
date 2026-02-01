@@ -87,11 +87,11 @@ func (s *Service) reconcileAndRecover(
 	// did not recover
 	var ae *apperr.Error
 	if errors.As(rerr, &ae) {
-		return CreateWithdrawalResult{}, ae.WithFields(attrs)
+		return CreateWithdrawalResult{}, ae.WithAttrs(attrs)
 	}
 
 	rerr = errors.Join(triggerErr, rerr)
-	return CreateWithdrawalResult{}, errInternal(StepReconcile, rerr).WithFields(attrs)
+	return CreateWithdrawalResult{}, errInternal(StepReconcile, rerr).WithAttrs(attrs)
 }
 
 func (s *Service) reconcile(
