@@ -24,7 +24,6 @@ type ReserveIdemParams struct {
 	WithdrawalID   string
 	LeaseAttemptID string
 	LeaseTTL       time.Duration
-	Now            time.Time
 }
 
 type ReserveIdemResult struct {
@@ -48,6 +47,8 @@ func (r *Repo) ReserveIdemTx(
 	p ReserveIdemParams,
 ) (ReserveIdemResult, error) {
 	var inserted bool
+	var insertLeaseExpiresAt time.Time
+	var insertLeaseFence int64
 
 	err := tx.QueryRow(ctx, `
 		INSERT INTO orchestrator.idempotency_keys (
@@ -62,7 +63,6 @@ func (r *Repo) ReserveIdemTx(
 			error_message,
 			status,
 			grpc_code,
-			updated_at,
 			lease_owner,
 			lease_expires_at,
 			lease_fence
@@ -80,22 +80,27 @@ func (r *Repo) ReserveIdemTx(
 			$5,
 			0,
 			$6,
-			$7,
-			$8,
+			now() + ($7 * interval '1 millisecond'),
 			1
 		)
 		ON CONFLICT (user_id, idempotency_key) DO NOTHING
-		RETURNING true
+		RETURNING
+			true,
+			lease_expires_at,
+			lease_fence
 	`,
 		p.UserID,
 		p.IdempotencyKey,
 		p.WithdrawalID,
 		p.RequestHash,
 		domain.IdemInProgress,
-		p.Now,
 		p.LeaseAttemptID,
-		p.Now.Add(p.LeaseTTL),
-	).Scan(&inserted)
+		p.LeaseTTL.Milliseconds(),
+	).Scan(
+		&inserted,
+		&insertLeaseExpiresAt,
+		&insertLeaseFence,
+	)
 
 	if err != nil && err != pgx.ErrNoRows {
 		return ReserveIdemResult{}, err
@@ -108,8 +113,8 @@ func (r *Repo) ReserveIdemTx(
 			WithdrawalID:   p.WithdrawalID,
 			RequestHash:    p.RequestHash,
 			LeaseOwner:     p.LeaseAttemptID,
-			LeaseExpiresAt: p.Now.Add(p.LeaseTTL),
-			LeaseFence:     1,
+			LeaseExpiresAt: insertLeaseExpiresAt,
+			LeaseFence:     insertLeaseFence,
 		}, nil
 	}
 
@@ -163,7 +168,7 @@ func (r *Repo) ReserveIdemTx(
 		return ReserveIdemResult{}, ErrIdempotencyKeyReuse
 	}
 
-	if status == domain.IdemInProgress && !leaseExpiresAt.After(p.Now) {
+	if status == domain.IdemInProgress {
 		var newLeaseFence int64
 		var newWithdrawalID string
 		var newRequestHash string
@@ -173,14 +178,14 @@ func (r *Repo) ReserveIdemTx(
 			UPDATE orchestrator.idempotency_keys
 			SET 
 				lease_owner = $4,
-				lease_expires_at = $5,
-				updated_at = $6,
+				lease_expires_at = now() + ($5 * interval '1 millisecond'),
+				updated_at = now(),
 				lease_fence = lease_fence + 1
 			WHERE 
 				user_id = $1
 				AND idempotency_key = $2
 				AND status = $3
-				AND lease_expires_at <= $6
+				AND lease_expires_at <= now()
 			RETURNING 
 				lease_fence,
 				withdrawal_id,
@@ -191,8 +196,7 @@ func (r *Repo) ReserveIdemTx(
 			p.IdempotencyKey,
 			domain.IdemInProgress,
 			p.LeaseAttemptID,
-			p.Now.Add(p.LeaseTTL),
-			p.Now,
+			p.LeaseTTL.Milliseconds(),
 		).Scan(
 			&newLeaseFence,
 			&newWithdrawalID,
@@ -211,7 +215,7 @@ func (r *Repo) ReserveIdemTx(
 				AppErrorCode:   appErrorCode,
 				ErrorMessage:   errorMessage,
 				LeaseOwner:     p.LeaseAttemptID,
-				LeaseExpiresAt: p.Now.Add(p.LeaseTTL),
+				LeaseExpiresAt: newLeaseExpiresAt,
 				LeaseFence:     newLeaseFence,
 			}, nil
 		}
@@ -339,7 +343,6 @@ type FinalizeIdemParams struct {
 	UserID         string
 	IdempotencyKey string
 	GRPCCode       int
-	Now            time.Time
 	ResponseBody   *string
 	AppErrorCode   *apperr.Code
 	ErrorMessage   *string
@@ -366,19 +369,18 @@ func (r *Repo) FinalizeIdemTx(
 			status = $1,
 			grpc_code = $2,
 			response_code = 200,
-			response_body_json = $9,
-			app_error_code = $10,
-			error_message = $11,
-			updated_at = $3
+			response_body_json = $8,
+			app_error_code = $9,
+			error_message = $10,
+			updated_at = now()
 		WHERE
-			user_id = $4
-			AND idempotency_key = $5
-			AND lease_owner = $6
-			AND status = $7
-			AND lease_fence = $8`,
+			user_id = $3
+			AND idempotency_key = $4
+			AND lease_owner = $5
+			AND status = $6
+			AND lease_fence = $7`,
 		p.Status,
 		p.GRPCCode,
-		p.Now,
 		p.UserID,
 		p.IdempotencyKey,
 		p.LeaseAttemptID,

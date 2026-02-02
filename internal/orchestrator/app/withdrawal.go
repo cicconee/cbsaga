@@ -71,7 +71,6 @@ func (s *Service) CreateWithdrawal(
 			WithdrawalID:   uuid.NewString(),
 			LeaseAttemptID: uuid.NewString(),
 			LeaseTTL:       30 * time.Second,
-			Now:            now,
 		})
 	}
 	idemRow, err := postgres.WithTxRetryResult(
@@ -118,7 +117,6 @@ func (s *Service) CreateWithdrawal(
 	finalParams := finalizeIdemParams{
 		userID:         v.UserID,
 		idemKey:        v.IdempotencyKey,
-		now:            now,
 		leaseAttemptID: idemRow.LeaseOwner,
 		leaseFence:     idemRow.LeaseFence,
 		traceID:        v.TraceID,
@@ -233,7 +231,6 @@ func (s *Service) CreateWithdrawal(
 type finalizeIdemParams struct {
 	userID         string
 	idemKey        string
-	now            time.Time
 	leaseAttemptID string
 	leaseFence     int64
 	traceID        string
@@ -253,7 +250,6 @@ func (s *Service) completeIdempotency(
 		UserID:         p.userID,
 		IdempotencyKey: p.idemKey,
 		GRPCCode:       grpcCode,
-		Now:            p.now,
 		ResponseBody:   p.responseBody,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
@@ -271,7 +267,6 @@ func (s *Service) failIdempotencyWithRetry(
 			UserID:         p.userID,
 			IdempotencyKey: p.idemKey,
 			GRPCCode:       grpcCode,
-			Now:            p.now,
 			AppErrorCode:   p.appErrorCode,
 			ErrorMessage:   p.errorMessage,
 			LeaseAttemptID: p.leaseAttemptID,
