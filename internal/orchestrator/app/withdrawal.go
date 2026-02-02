@@ -95,10 +95,17 @@ func (s *Service) CreateWithdrawal(
 		return CreateWithdrawalResult{}, errInternal(StepReserveIdempotency, err)
 	}
 
+	reconcileKey := reconcileKey{
+		TraceID:      v.TraceID,
+		UserID:       v.UserID,
+		IdemKey:      v.IdempotencyKey,
+		WithdrawalID: idemRow.WithdrawalID,
+	}
 	// Reserve idempotency transaction is committed and idempotency key is reserved in db
 	// but current run does not own it.
 	if !idemRow.Owned {
-		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		tr := newTrigger(StepReserveIdempotency, "idempotency_not_owned", nil)
+		return s.reconcileAndRecover(ctx, reconcileKey, tr)
 	}
 
 	// begin tx that will create the withdrawal.
@@ -161,7 +168,8 @@ func (s *Service) CreateWithdrawal(
 	if err != nil {
 		// If withdrawal already exists some how, reconcile, do not mark as failure.
 		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
-			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+			tr := newTrigger(StepCreateWithdrawal, "withdrawal_already_exists", err)
+			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "create_withdrawal", err)
 		return s.failAndReconcile(ctx, 13, finalParams, tr)
@@ -171,7 +179,8 @@ func (s *Service) CreateWithdrawal(
 	outcome, err := s.completeIdempotency(ctx, workTx, 0, finalParams)
 	if err != nil {
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
-			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+			tr := newTrigger(StepCreateWithdrawal, "lost_lease_ownership", err)
+			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "completed_idempotency", err)
 		return s.failAndReconcile(ctx, 13, finalParams, tr)
@@ -180,7 +189,8 @@ func (s *Service) CreateWithdrawal(
 	// This current run took too long from the moment of ownership till now, that
 	// another run gained ownership of the lease and already finalized the withdrawal request.
 	if outcome == repo.FinalizeAlreadyFinalized {
-		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		tr := newTrigger(StepCreateWithdrawal, "idempotency_already_finalize", err)
+		return s.reconcileAndRecover(ctx, reconcileKey, tr)
 	}
 
 	// Commit the atomic transaction: finalizes idempotency key status and inserts withdrawal.
@@ -196,15 +206,8 @@ func (s *Service) CreateWithdrawal(
 		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		key := reconcileKey{
-			TraceID:      v.TraceID,
-			UserID:       v.UserID,
-			IdemKey:      v.IdempotencyKey,
-			WithdrawalID: idemRow.WithdrawalID,
-		}
-
 		tr := newTrigger(StepCreateWithdrawal, "commit_work_tx", trigger)
-		return s.reconcileAndRecover(rctx, key, tr)
+		return s.reconcileAndRecover(rctx, reconcileKey, tr)
 	}
 
 	return CreateWithdrawalResult{
