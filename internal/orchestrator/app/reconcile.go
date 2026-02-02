@@ -38,7 +38,6 @@ func newTrigger(step string, reason string, err error) trigger {
 
 func (s *Service) failAndReconcile(
 	ctx context.Context,
-	grpcCode int,
 	p finalizeIdemParams,
 	tr trigger,
 ) (CreateWithdrawalResult, error) {
@@ -46,7 +45,7 @@ func (s *Service) failAndReconcile(
 
 	p.appErrorCode = &errf.Code
 	p.errorMessage = &errf.Message
-	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
+	outcome, err := s.failIdempotencyWithRetry(ctx, p)
 	if err == nil && outcome == repo.FinalizeApplied {
 		return CreateWithdrawalResult{}, errf
 	}

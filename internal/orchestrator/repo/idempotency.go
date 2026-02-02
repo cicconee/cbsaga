@@ -32,7 +32,6 @@ type ReserveIdemResult struct {
 	Status         string
 	WithdrawalID   string
 	RequestHash    string
-	GRPCCode       int
 	ResponseBody   *string
 	AppErrorCode   *apperr.Code
 	ErrorMessage   *string
@@ -57,12 +56,10 @@ func (r *Repo) ReserveIdemTx(
 			idempotency_key,
 			withdrawal_id,
 			request_hash,
-			response_code,
 			response_body_json, 
 			app_error_code,
 			error_message,
 			status,
-			grpc_code,
 			lease_owner,
 			lease_expires_at,
 			lease_fence
@@ -73,12 +70,10 @@ func (r *Repo) ReserveIdemTx(
 			$2,
 			$3,
 			$4,
-			0,
 			NULL,
 			NULL,
 			NULL,
 			$5,
-			0,
 			$6,
 			now() + ($7 * interval '1 millisecond'),
 			1
@@ -121,7 +116,6 @@ func (r *Repo) ReserveIdemTx(
 	var status string
 	var withdrawalID string
 	var requestHash string
-	var grpcCode int
 	var respBody *string
 	var appErrorCode *apperr.Code
 	var errorMessage *string
@@ -134,7 +128,6 @@ func (r *Repo) ReserveIdemTx(
 			status,
 			withdrawal_id,
 			request_hash,
-			grpc_code, 
 			response_body_json,
 			app_error_code,
 			error_message,
@@ -152,7 +145,6 @@ func (r *Repo) ReserveIdemTx(
 		&status,
 		&withdrawalID,
 		&requestHash,
-		&grpcCode,
 		&respBody,
 		&appErrorCode,
 		&errorMessage,
@@ -233,7 +225,6 @@ func (r *Repo) ReserveIdemTx(
 		ResponseBody:   respBody,
 		AppErrorCode:   appErrorCode,
 		ErrorMessage:   errorMessage,
-		GRPCCode:       grpcCode,
 		LeaseOwner:     leaseOwner,
 		LeaseExpiresAt: leaseExpiresAt,
 		LeaseFence:     leaseFence,
@@ -252,7 +243,6 @@ type GetIdemResult struct {
 	ResponseBody   *string
 	AppErrorCode   *apperr.Code
 	ErrorMessage   *string
-	GRPCCode       int
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
 }
@@ -272,7 +262,6 @@ func (r *Repo) GetIdem(
 			response_body_json,
 			app_error_code,
 			error_message,
-			grpc_code,
 			lease_owner,
 			lease_expires_at
 		FROM orchestrator.idempotency_keys
@@ -289,7 +278,6 @@ func (r *Repo) GetIdem(
 		&row.ResponseBody,
 		&row.AppErrorCode,
 		&row.ErrorMessage,
-		&row.GRPCCode,
 		&row.LeaseOwner,
 		&row.LeaseExpiresAt,
 	)
@@ -342,7 +330,6 @@ func (r *Repo) ReadIdemStateTx(
 type FinalizeIdemParams struct {
 	UserID         string
 	IdempotencyKey string
-	GRPCCode       int
 	ResponseBody   *string
 	AppErrorCode   *apperr.Code
 	ErrorMessage   *string
@@ -367,20 +354,17 @@ func (r *Repo) FinalizeIdemTx(
 		UPDATE orchestrator.idempotency_keys
 		SET
 			status = $1,
-			grpc_code = $2,
-			response_code = 200,
-			response_body_json = $8,
-			app_error_code = $9,
-			error_message = $10,
+			response_body_json = $7,
+			app_error_code = $8,
+			error_message = $9,
 			updated_at = now()
 		WHERE
-			user_id = $3
-			AND idempotency_key = $4
-			AND lease_owner = $5
-			AND status = $6
-			AND lease_fence = $7`,
+			user_id = $2
+			AND idempotency_key = $3
+			AND lease_owner = $4
+			AND status = $5
+			AND lease_fence = $6`,
 		p.Status,
-		p.GRPCCode,
 		p.UserID,
 		p.IdempotencyKey,
 		p.LeaseAttemptID,

@@ -126,7 +126,7 @@ func (s *Service) CreateWithdrawal(
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "begin_work_tx", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
 
@@ -137,7 +137,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_identity_payload", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: idemRow.WithdrawalID,
@@ -145,7 +145,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_withdrawal_payload", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
@@ -176,7 +176,7 @@ func (s *Service) CreateWithdrawal(
 			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "create_withdrawal", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 
 	createWithdrawalResult := CreateWithdrawalResult{
@@ -186,19 +186,19 @@ func (s *Service) CreateWithdrawal(
 	respBody, err := codec.EncodeJSONPtr(createWithdrawalResult)
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_response_body", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 	finalParams.responseBody = respBody
 
 	// Mark the idempotency key as completed status.
-	outcome, err := s.completeIdempotency(ctx, workTx, 0, finalParams)
+	outcome, err := s.completeIdempotency(ctx, workTx, finalParams)
 	if err != nil {
 		if errors.Is(err, repo.ErrLostLeaseOwnership) {
 			tr := newTrigger(StepCreateWithdrawal, "lost_lease_ownership", err)
 			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "completed_idempotency", err)
-		return s.failAndReconcile(ctx, 13, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, tr)
 	}
 
 	// This current run took too long from the moment of ownership till now, that
@@ -243,13 +243,11 @@ type finalizeIdemParams struct {
 func (s *Service) completeIdempotency(
 	ctx context.Context,
 	workTx pgx.Tx,
-	grpcCode int,
 	p finalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
 	return s.repo.FinalizeIdemTx(ctx, workTx, repo.FinalizeIdemParams{
 		UserID:         p.userID,
 		IdempotencyKey: p.idemKey,
-		GRPCCode:       grpcCode,
 		ResponseBody:   p.responseBody,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
@@ -259,14 +257,12 @@ func (s *Service) completeIdempotency(
 
 func (s *Service) failIdempotencyWithRetry(
 	ctx context.Context,
-	grpcCode int,
 	p finalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
 	txFunc := func(ctx context.Context, tx pgx.Tx) (repo.FinalizeOutcome, error) {
 		return s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
 			UserID:         p.userID,
 			IdempotencyKey: p.idemKey,
-			GRPCCode:       grpcCode,
 			AppErrorCode:   p.appErrorCode,
 			ErrorMessage:   p.errorMessage,
 			LeaseAttemptID: p.leaseAttemptID,
