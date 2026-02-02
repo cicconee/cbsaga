@@ -7,6 +7,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
+	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/fields"
 	"github.com/jackc/pgx/v5"
 )
@@ -41,10 +42,13 @@ func (s *Service) failAndReconcile(
 	p finalizeIdemParams,
 	tr trigger,
 ) (CreateWithdrawalResult, error) {
+	errf := errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
+
+	p.appErrorCode = &errf.Code
+	p.errorMessage = &errf.Message
 	outcome, err := s.failIdempotencyWithRetry(ctx, grpcCode, p)
 	if err == nil && outcome == repo.FinalizeApplied {
-		// Finalized applied successfully (marked FAILED), so return the domain error.
-		return CreateWithdrawalResult{}, errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
+		return CreateWithdrawalResult{}, errf
 	}
 
 	key := reconcileKey{
@@ -125,13 +129,38 @@ func (s *Service) reconcile(
 		if err != nil {
 			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
 		}
+		if idemRow.ResponseBody != nil {
+			var res CreateWithdrawalResult
+			if err := codec.DecodeJSONPtr(idemRow.ResponseBody, &res); err != nil {
+				return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
+			}
+			res.replay = true
+			return res, nil
+		}
 
+		// Fallback - maybe error, not sure yet. Leaning towards error.
 		return CreateWithdrawalResult{
 			WithdrawalID: w.WithdrawalID,
 			Status:       domain.WithdrawalStatusRequested,
+			replay:       true,
 		}, nil
 	case domain.IdemFailed:
-		return CreateWithdrawalResult{}, errFailed(StepReconcile, nil)
+		if idemRow.AppErrorCode != nil && idemRow.ErrorMessage != nil {
+			return CreateWithdrawalResult{}, apperr.New(
+				*idemRow.AppErrorCode,
+				SubjectWithdrawalCreate,
+				StepReconcile,
+				*idemRow.ErrorMessage,
+				false,
+				nil,
+			).WithAttr("replay", true)
+		}
+
+		// Fallback - maybe error (not replay error), not sure yet. Leaning towards error.
+		err := errFailed(StepReconcile, nil).
+			WithAttr("replay", true).
+			WithAttr("replay_not_found", true)
+		return CreateWithdrawalResult{}, err
 	case domain.IdemInProgress:
 		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
 			WithdrawalID: idemRow.WithdrawalID,

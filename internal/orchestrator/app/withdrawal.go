@@ -9,6 +9,7 @@ import (
 	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -41,8 +42,13 @@ type CreateWithdrawalParams struct {
 }
 
 type CreateWithdrawalResult struct {
-	WithdrawalID string
-	Status       string
+	WithdrawalID string `json:"withdrawal_id"`
+	Status       string `json:"status"`
+	replay       bool
+}
+
+func (r *CreateWithdrawalResult) IsReplay() bool {
+	return r.replay
 }
 
 func (s *Service) CreateWithdrawal(
@@ -175,6 +181,17 @@ func (s *Service) CreateWithdrawal(
 		return s.failAndReconcile(ctx, 13, finalParams, tr)
 	}
 
+	createWithdrawalResult := CreateWithdrawalResult{
+		WithdrawalID: res.WithdrawalID,
+		Status:       res.Status,
+	}
+	respBody, err := codec.EncodeJSONPtr(createWithdrawalResult)
+	if err != nil {
+		tr := newTrigger(StepCreateWithdrawal, "encode_response_body", err)
+		return s.failAndReconcile(ctx, 13, finalParams, tr)
+	}
+	finalParams.responseBody = respBody
+
 	// Mark the idempotency key as completed status.
 	outcome, err := s.completeIdempotency(ctx, workTx, 0, finalParams)
 	if err != nil {
@@ -210,10 +227,7 @@ func (s *Service) CreateWithdrawal(
 		return s.reconcileAndRecover(rctx, reconcileKey, tr)
 	}
 
-	return CreateWithdrawalResult{
-		WithdrawalID: res.WithdrawalID,
-		Status:       res.Status,
-	}, nil
+	return createWithdrawalResult, nil
 }
 
 type finalizeIdemParams struct {
@@ -224,6 +238,9 @@ type finalizeIdemParams struct {
 	leaseFence     int64
 	traceID        string
 	withdrawalID   string
+	responseBody   *string
+	appErrorCode   *apperr.Code
+	errorMessage   *string
 }
 
 func (s *Service) completeIdempotency(
@@ -237,6 +254,7 @@ func (s *Service) completeIdempotency(
 		IdempotencyKey: p.idemKey,
 		GRPCCode:       grpcCode,
 		Now:            p.now,
+		ResponseBody:   p.responseBody,
 		LeaseAttemptID: p.leaseAttemptID,
 		LeaseFence:     p.leaseFence,
 		Status:         domain.IdemCompleted,
@@ -254,6 +272,8 @@ func (s *Service) failIdempotencyWithRetry(
 			IdempotencyKey: p.idemKey,
 			GRPCCode:       grpcCode,
 			Now:            p.now,
+			AppErrorCode:   p.appErrorCode,
+			ErrorMessage:   p.errorMessage,
 			LeaseAttemptID: p.leaseAttemptID,
 			LeaseFence:     p.leaseFence,
 			Status:         domain.IdemFailed,

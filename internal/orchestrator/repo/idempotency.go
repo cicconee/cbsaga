@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
+	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -33,6 +34,9 @@ type ReserveIdemResult struct {
 	WithdrawalID   string
 	RequestHash    string
 	GRPCCode       int
+	ResponseBody   *string
+	AppErrorCode   *apperr.Code
+	ErrorMessage   *string
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
 	LeaseFence     int64
@@ -54,6 +58,8 @@ func (r *Repo) ReserveIdemTx(
 			request_hash,
 			response_code,
 			response_body_json, 
+			app_error_code,
+			error_message,
 			status,
 			grpc_code,
 			updated_at,
@@ -68,7 +74,9 @@ func (r *Repo) ReserveIdemTx(
 			$3,
 			$4,
 			0,
-			'{}',
+			NULL,
+			NULL,
+			NULL,
 			$5,
 			0,
 			$6,
@@ -109,7 +117,9 @@ func (r *Repo) ReserveIdemTx(
 	var withdrawalID string
 	var requestHash string
 	var grpcCode int
-	var respBody string
+	var respBody *string
+	var appErrorCode *apperr.Code
+	var errorMessage *string
 	var leaseOwner string
 	var leaseExpiresAt time.Time
 	var leaseFence int64
@@ -121,6 +131,8 @@ func (r *Repo) ReserveIdemTx(
 			request_hash,
 			grpc_code, 
 			response_body_json,
+			app_error_code,
+			error_message,
 			lease_owner,
 			lease_expires_at,
 			lease_fence
@@ -137,6 +149,8 @@ func (r *Repo) ReserveIdemTx(
 		&requestHash,
 		&grpcCode,
 		&respBody,
+		&appErrorCode,
+		&errorMessage,
 		&leaseOwner,
 		&leaseExpiresAt,
 		&leaseFence,
@@ -193,6 +207,9 @@ func (r *Repo) ReserveIdemTx(
 				Status:         domain.IdemInProgress,
 				WithdrawalID:   newWithdrawalID,
 				RequestHash:    newRequestHash,
+				ResponseBody:   respBody,
+				AppErrorCode:   appErrorCode,
+				ErrorMessage:   errorMessage,
 				LeaseOwner:     p.LeaseAttemptID,
 				LeaseExpiresAt: p.Now.Add(p.LeaseTTL),
 				LeaseFence:     newLeaseFence,
@@ -209,6 +226,9 @@ func (r *Repo) ReserveIdemTx(
 		Status:         status,
 		WithdrawalID:   withdrawalID,
 		RequestHash:    requestHash,
+		ResponseBody:   respBody,
+		AppErrorCode:   appErrorCode,
+		ErrorMessage:   errorMessage,
 		GRPCCode:       grpcCode,
 		LeaseOwner:     leaseOwner,
 		LeaseExpiresAt: leaseExpiresAt,
@@ -225,6 +245,9 @@ type GetIdemResult struct {
 	Status         string
 	WithdrawalID   string
 	RequestHash    string
+	ResponseBody   *string
+	AppErrorCode   *apperr.Code
+	ErrorMessage   *string
 	GRPCCode       int
 	LeaseOwner     string
 	LeaseExpiresAt time.Time
@@ -242,6 +265,9 @@ func (r *Repo) GetIdem(
 			status,
 			withdrawal_id,
 			request_hash,
+			response_body_json,
+			app_error_code,
+			error_message,
 			grpc_code,
 			lease_owner,
 			lease_expires_at
@@ -256,6 +282,9 @@ func (r *Repo) GetIdem(
 		&row.Status,
 		&row.WithdrawalID,
 		&row.RequestHash,
+		&row.ResponseBody,
+		&row.AppErrorCode,
+		&row.ErrorMessage,
 		&row.GRPCCode,
 		&row.LeaseOwner,
 		&row.LeaseExpiresAt,
@@ -311,6 +340,9 @@ type FinalizeIdemParams struct {
 	IdempotencyKey string
 	GRPCCode       int
 	Now            time.Time
+	ResponseBody   *string
+	AppErrorCode   *apperr.Code
+	ErrorMessage   *string
 	LeaseAttemptID string
 	LeaseFence     int64
 	Status         string
@@ -334,6 +366,9 @@ func (r *Repo) FinalizeIdemTx(
 			status = $1,
 			grpc_code = $2,
 			response_code = 200,
+			response_body_json = $9,
+			app_error_code = $10,
+			error_message = $11,
 			updated_at = $3
 		WHERE
 			user_id = $4
@@ -349,6 +384,9 @@ func (r *Repo) FinalizeIdemTx(
 		p.LeaseAttemptID,
 		domain.IdemInProgress,
 		p.LeaseFence,
+		p.ResponseBody,
+		p.AppErrorCode,
+		p.ErrorMessage,
 	)
 	if err != nil {
 		return 0, err
