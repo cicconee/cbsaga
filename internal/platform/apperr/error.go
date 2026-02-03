@@ -22,14 +22,14 @@ type Error struct {
 	Message   string // safe to expose
 	Retryable bool
 	Cause     error
-	Attrs     *fields.Attrs
+	attrs     *fields.Attrs
 }
 
 func (e *Error) WithAttr(k string, v any) *Error {
-	if e.Attrs == nil {
-		e.Attrs = fields.New()
+	if e.attrs == nil {
+		e.attrs = fields.New()
 	}
-	e.Attrs.Set(k, v)
+	e.attrs.Set(k, v)
 	return e
 }
 
@@ -37,10 +37,10 @@ func (e *Error) WithAttrs(a *fields.Attrs) *Error {
 	if a == nil {
 		return e
 	}
-	if e.Attrs == nil {
-		e.Attrs = fields.New()
+	if e.attrs == nil {
+		e.attrs = fields.New()
 	}
-	e.Attrs.Merge(a)
+	e.attrs.Merge(a)
 	return e
 }
 
@@ -53,6 +53,17 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error {
 	return e.Cause
+}
+
+func (e *Error) LogArgs() []any {
+	return fields.New().
+		Str("app_code", string(e.Code)).
+		Str("subject", e.Subject).
+		Str("step", e.Step).
+		Str("message", e.Message).
+		Bool("retryable", e.Retryable).
+		Merge(e.attrs).
+		Args()
 }
 
 func New(code Code, subject string, step string, msg string, retryable bool, cause error) *Error {
