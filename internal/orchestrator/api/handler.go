@@ -8,6 +8,7 @@ import (
 	orchestratorv1 "github.com/cicconee/cbsaga/gen/orchestrator/v1"
 	"github.com/cicconee/cbsaga/internal/orchestrator/app"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/platform/meta"
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,7 +28,10 @@ func (h *Handler) CreateWithdrawal(
 	ctx context.Context,
 	req *orchestratorv1.CreateWithdrawalRequest,
 ) (*orchestratorv1.CreateWithdrawalResponse, error) {
+	ctx, traceID := meta.EnsureTraceID(ctx)
+
 	h.log.Info("CreateWithdrawal called",
+		"trace_id", traceID,
 		"user_id", req.GetUserId(),
 		"asset", req.GetAsset(),
 		"amount_miner", req.GetAmountMinor(),
@@ -40,7 +44,6 @@ func (h *Handler) CreateWithdrawal(
 		AmountMinor:     req.GetAmountMinor(),
 		DestinationAddr: req.GetDestinationAddr(),
 		IdempotencyKey:  req.GetIdempotencyKey(),
-		TraceID:         "local-trace-id",
 	})
 	if err != nil {
 		switch {
@@ -65,6 +68,7 @@ func (h *Handler) CreateWithdrawal(
 	}
 
 	h.log.Info("CreateWithdrawal success",
+		"trace_id", traceID,
 		"withdrawal_id", res.WithdrawalID,
 		"status", res.Status,
 	)

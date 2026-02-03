@@ -9,11 +9,11 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/fields"
+	"github.com/cicconee/cbsaga/internal/platform/meta"
 	"github.com/jackc/pgx/v5"
 )
 
 type reconcileKey struct {
-	TraceID      string
 	UserID       string
 	IdemKey      string
 	WithdrawalID string
@@ -51,7 +51,6 @@ func (s *Service) failAndReconcile(
 	}
 
 	key := reconcileKey{
-		TraceID:      p.traceID,
 		UserID:       p.userID,
 		IdemKey:      p.idemKey,
 		WithdrawalID: p.withdrawalID,
@@ -77,10 +76,11 @@ func (s *Service) reconcileAndRecover(
 	key reconcileKey,
 	tr trigger,
 ) (CreateWithdrawalResult, error) {
+	ctx, traceID := meta.EnsureTraceID(ctx)
 	res, rerr := s.reconcile(ctx, key.UserID, key.IdemKey)
 
 	logAttrs := fields.New().
-		Str("trace_id", key.TraceID).
+		Str("trace_id", traceID).
 		Str("user_id", key.UserID).
 		Str("idempotency_key", key.IdemKey).
 		Str("withdrawal_id", key.WithdrawalID).

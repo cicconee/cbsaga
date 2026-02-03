@@ -13,6 +13,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/platform/meta"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,7 +39,6 @@ type CreateWithdrawalParams struct {
 	AmountMinor     int64
 	DestinationAddr string
 	IdempotencyKey  string
-	TraceID         string
 }
 
 type CreateWithdrawalResult struct {
@@ -56,6 +56,7 @@ func (s *Service) CreateWithdrawal(
 	p CreateWithdrawalParams,
 ) (CreateWithdrawalResult, error) {
 	now := time.Now().UTC()
+	ctx, traceID := meta.EnsureTraceID(ctx)
 
 	v, err := NewValidatedCreateWithdrawal(p)
 	if err != nil {
@@ -89,7 +90,6 @@ func (s *Service) CreateWithdrawal(
 		var cu postgres.CommitUnknownError
 		if errors.As(err, &cu) {
 			key := reconcileKey{
-				TraceID: v.TraceID,
 				UserID:  v.UserID,
 				IdemKey: v.IdempotencyKey,
 			}
@@ -101,7 +101,6 @@ func (s *Service) CreateWithdrawal(
 	}
 
 	reconcileKey := reconcileKey{
-		TraceID:      v.TraceID,
 		UserID:       v.UserID,
 		IdemKey:      v.IdempotencyKey,
 		WithdrawalID: idemRow.WithdrawalID,
@@ -119,7 +118,6 @@ func (s *Service) CreateWithdrawal(
 		idemKey:        v.IdempotencyKey,
 		leaseAttemptID: idemRow.LeaseOwner,
 		leaseFence:     idemRow.LeaseFence,
-		traceID:        v.TraceID,
 		withdrawalID:   idemRow.WithdrawalID,
 	}
 
@@ -155,7 +153,7 @@ func (s *Service) CreateWithdrawal(
 		Asset:           v.Asset,
 		AmountMinor:     v.AmountMinor,
 		DestinationAddr: v.DestinationAddr,
-		TraceID:         v.TraceID,
+		TraceID:         traceID,
 		OutboxEvents: []repo.OutboxEvent{
 			{
 				EventType: orchestrator.EventTypeWithdrawalRequested,
@@ -233,7 +231,6 @@ type finalizeIdemParams struct {
 	idemKey        string
 	leaseAttemptID string
 	leaseFence     int64
-	traceID        string
 	withdrawalID   string
 	responseBody   *string
 	appErrorCode   *apperr.Code
