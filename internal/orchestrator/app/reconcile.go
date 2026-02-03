@@ -38,22 +38,17 @@ func newTrigger(step string, reason string, err error) trigger {
 
 func (s *Service) failAndReconcile(
 	ctx context.Context,
-	p finalizeIdemParams,
+	p repo.FinalizeIdemParams,
+	key reconcileKey,
 	tr trigger,
 ) (CreateWithdrawalResult, error) {
 	errf := errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
 
-	p.appErrorCode = &errf.Code
-	p.errorMessage = &errf.Message
+	p.AppErrorCode = &errf.Code
+	p.ErrorMessage = &errf.Message
 	outcome, err := s.failIdempotencyWithRetry(ctx, p)
 	if err == nil && outcome == repo.FinalizeApplied {
 		return CreateWithdrawalResult{}, errf
-	}
-
-	key := reconcileKey{
-		UserID:       p.userID,
-		IdemKey:      p.idemKey,
-		WithdrawalID: p.withdrawalID,
 	}
 
 	var outcomeStr string

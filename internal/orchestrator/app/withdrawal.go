@@ -9,7 +9,6 @@ import (
 	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
-	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
@@ -113,18 +112,17 @@ func (s *Service) CreateWithdrawal(
 	}
 
 	// begin tx that will create the withdrawal.
-	finalParams := finalizeIdemParams{
-		userID:         v.UserID,
-		idemKey:        v.IdempotencyKey,
-		leaseAttemptID: idemRow.LeaseOwner,
-		leaseFence:     idemRow.LeaseFence,
-		withdrawalID:   idemRow.WithdrawalID,
+	finalParams := repo.FinalizeIdemParams{
+		UserID:         v.UserID,
+		IdempotencyKey: v.IdempotencyKey,
+		LeaseAttemptID: idemRow.LeaseOwner,
+		LeaseFence:     idemRow.LeaseFence,
 	}
 
 	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "begin_work_tx", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
 	defer func() { _ = workTx.Rollback(ctx) }()
 
@@ -135,7 +133,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_identity_payload", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: idemRow.WithdrawalID,
@@ -143,7 +141,7 @@ func (s *Service) CreateWithdrawal(
 	})
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_withdrawal_payload", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
 
 	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
@@ -174,7 +172,7 @@ func (s *Service) CreateWithdrawal(
 			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "create_withdrawal", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
 
 	createWithdrawalResult := CreateWithdrawalResult{
@@ -184,9 +182,9 @@ func (s *Service) CreateWithdrawal(
 	respBody, err := codec.EncodeJSONPtr(createWithdrawalResult)
 	if err != nil {
 		tr := newTrigger(StepCreateWithdrawal, "encode_response_body", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
-	finalParams.responseBody = respBody
+	finalParams.ResponseBody = respBody
 
 	// Mark the idempotency key as completed status.
 	outcome, err := s.completeIdempotency(ctx, workTx, finalParams)
@@ -196,7 +194,7 @@ func (s *Service) CreateWithdrawal(
 			return s.reconcileAndRecover(ctx, reconcileKey, tr)
 		}
 		tr := newTrigger(StepCreateWithdrawal, "completed_idempotency", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
 	}
 
 	// This current run took too long from the moment of ownership till now, that
@@ -226,46 +224,23 @@ func (s *Service) CreateWithdrawal(
 	return createWithdrawalResult, nil
 }
 
-type finalizeIdemParams struct {
-	userID         string
-	idemKey        string
-	leaseAttemptID string
-	leaseFence     int64
-	withdrawalID   string
-	responseBody   *string
-	appErrorCode   *apperr.Code
-	errorMessage   *string
-}
-
 func (s *Service) completeIdempotency(
 	ctx context.Context,
 	workTx pgx.Tx,
-	p finalizeIdemParams,
+	p repo.FinalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
-	return s.repo.FinalizeIdemTx(ctx, workTx, repo.FinalizeIdemParams{
-		UserID:         p.userID,
-		IdempotencyKey: p.idemKey,
-		ResponseBody:   p.responseBody,
-		LeaseAttemptID: p.leaseAttemptID,
-		LeaseFence:     p.leaseFence,
-		Status:         domain.IdemCompleted,
-	})
+	p.Status = domain.IdemCompleted
+	return s.repo.FinalizeIdemTx(ctx, workTx, p)
 }
 
 func (s *Service) failIdempotencyWithRetry(
 	ctx context.Context,
-	p finalizeIdemParams,
+	p repo.FinalizeIdemParams,
 ) (repo.FinalizeOutcome, error) {
+	p.Status = domain.IdemFailed
+
 	txFunc := func(ctx context.Context, tx pgx.Tx) (repo.FinalizeOutcome, error) {
-		return s.repo.FinalizeIdemTx(ctx, tx, repo.FinalizeIdemParams{
-			UserID:         p.userID,
-			IdempotencyKey: p.idemKey,
-			AppErrorCode:   p.appErrorCode,
-			ErrorMessage:   p.errorMessage,
-			LeaseAttemptID: p.leaseAttemptID,
-			LeaseFence:     p.leaseFence,
-			Status:         domain.IdemFailed,
-		})
+		return s.repo.FinalizeIdemTx(ctx, tx, p)
 	}
 
 	return postgres.WithTxRetryResult[repo.FinalizeOutcome](
