@@ -1,31 +1,33 @@
 package logging
 
 import (
-	"log"
+	"log/slog"
 	"os"
 )
 
 type Logger struct {
-	*log.Logger
+	*slog.Logger
 }
 
 func New(service string) *Logger {
-	prefix := service + " "
-	return &Logger{Logger: log.New(os.Stdout, prefix, log.LstdFlags|log.Lmicroseconds|log.LUTC)}
+	// TODO: Make handler and log level configurable.
+	opts := &slog.HandlerOptions{Level: slog.LevelDebug}
+	base := slog.New(slog.NewJSONHandler(os.Stdout, opts)).With("service", service)
+	return &Logger{Logger: base}
 }
 
 func (l *Logger) Info(msg string, kv ...any) {
-	l.Printf("INFO  %s %v", msg, kv)
+	l.Logger.Info(msg, kv...)
 }
 
 func (l *Logger) Debug(msg string, kv ...any) {
-	l.Printf("DEBUG  %s %v", msg, kv)
+	l.Logger.Debug(msg, kv...)
 }
 
 func (l *Logger) Warn(msg string, kv ...any) {
-	l.Printf("WARN  %s %v", msg, kv)
+	l.Logger.Warn(msg, kv...)
 }
 
 func (l *Logger) Error(msg string, kv ...any) {
-	l.Printf("ERROR  %s %v", msg, kv)
+	l.Logger.Error(msg, kv...)
 }
