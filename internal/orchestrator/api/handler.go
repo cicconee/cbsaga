@@ -50,7 +50,7 @@ func (h *Handler) CreateWithdrawal(
 		var ae *apperr.Error
 		if errors.As(err, &ae) {
 			args := []any{"trace_id", traceID}
-			args = append(args, ae.LogArgs())
+			args = append(args, ae.LogArgs()...)
 			h.log.Error("CreateWithdrawal failed", args...)
 			return nil, status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
 		}
@@ -93,7 +93,7 @@ func (h *Handler) GetWithdrawal(
 		var ae *apperr.Error
 		if errors.As(err, &ae) {
 			args := []any{"trace_id", traceID}
-			args = append(args, ae.LogArgs())
+			args = append(args, ae.LogArgs()...)
 			h.log.Error("GetWithdrawal failed", args...)
 			return nil, status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
 		}
