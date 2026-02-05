@@ -1,0 +1,52 @@
+{
+  "id": null,
+  "uid": "cbsaga-obs",
+  "title": "cbsaga · Observability",
+  "tags": ["cbsaga", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "5s",
+  "templating": {},
+  "panels": [
+    {
+      "id": 1,
+      "type": "logs",
+      "title": "cbsaga logs (Loki)",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 14 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "expr": "{job=\"cbsaga\"}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Recent traces (Tempo)",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 10 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ resource.service.name =~ \"cbsaga-.*\" && name !~ \".*ServerReflection.*\"}",
+          "limit": 50
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

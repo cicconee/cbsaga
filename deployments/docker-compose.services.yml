@@ -1,0 +1,43 @@
+services:
+  orchestrator:
+    container_name: svc-orchestrator
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: orchestrator
+    environment:
+      CBSAGA_ENV: demo
+      CBSAGA_ORCH_GRPC_ADDR: ":9000"
+      CBSAGA_ORCH_POSTGRES_DSN: postgres://postgres:postgres@postgres:5432/orchestrator?sslmode=disable
+      CBSAGA_KAFKA_BROKERS: redpanda:29092
+      CBSAGA_ORCH_IDENTITY_TOPIC: cbsaga.evt.identity
+      CBSAGA_ORCH_GROUP_ID: cbsaga-orchestrator
+      CBSAGA_OTEL_ENABLED: "true"
+      CBSAGA_OTEL_SERVICE_NAME: cbsaga-orchestrator
+      CBSAGA_OTEL_EXPORTER_OTLP_ENDPOINT: tempo:4317
+      CBSAGA_OTEL_EXPORTER_OTLP_INSECURE: "true"
+      CBSAGA_OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      CBSAGA_OTEL_TRACES_SAMPLER_ARG: "1.0"
+    ports:
+      - "9000:9000"
+
+  identity:
+    container_name: svc-identity
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: identity
+    environment:
+      CBSAGA_ENV: demo
+      CBSAGA_IDENTITY_POSTGRES_DSN: postgres://postgres:postgres@identity-postgres:5432/identity?sslmode=disable
+      CBSAGA_KAFKA_BROKERS: redpanda:29092
+      CBSAGA_WITHDRAWAL_TOPIC: cbsaga.cmd.identity
+      CBSAGA_IDENTITY_CONSUMER_GROUP_ID: cbsaga-identity
+      CBSAGA_OTEL_ENABLED: "true"
+      CBSAGA_OTEL_SERVICE_NAME: cbsaga-identity
+      CBSAGA_OTEL_EXPORTER_OTLP_ENDPOINT: tempo:4317
+      CBSAGA_OTEL_EXPORTER_OTLP_INSECURE: "true"
+      CBSAGA_OTEL_TRACES_SAMPLER: parentbased_traceidratio
+      CBSAGA_OTEL_TRACES_SAMPLER_ARG: "1.0"

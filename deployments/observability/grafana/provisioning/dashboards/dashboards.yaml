@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: cbsaga
+    type: file
+    folder: "cbsaga"
+    disableDeletion: true
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
