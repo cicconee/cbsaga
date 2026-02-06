@@ -24,23 +24,26 @@ const (
 	spanPrefix = "orchestrator."
 )
 
-var tracer = otel.Tracer("orchestrator/api")
-
 type Handler struct {
 	orchestratorv1.UnimplementedOrchestratorServiceServer
-	svc *app.Service
-	log *logging.Logger
+	svc    *app.Service
+	log    *logging.Logger
+	tracer trace.Tracer
 }
 
 func NewHandler(svc *app.Service, log *logging.Logger) *Handler {
-	return &Handler{svc: svc, log: log}
+	return &Handler{
+		svc:    svc,
+		log:    log,
+		tracer: otel.Tracer("orchestrator/api"),
+	}
 }
 
 func (h *Handler) CreateWithdrawal(
 	ctx context.Context,
 	req *orchestratorv1.CreateWithdrawalRequest,
 ) (*orchestratorv1.CreateWithdrawalResponse, error) {
-	ctx, span := tracer.Start(ctx, spanPrefix+opCreateWithdrawal)
+	ctx, span := h.tracer.Start(ctx, spanPrefix+opCreateWithdrawal)
 	defer span.End()
 
 	log := h.log.WithContext(ctx)
@@ -88,7 +91,7 @@ func (h *Handler) GetWithdrawal(
 	ctx context.Context,
 	req *orchestratorv1.GetWithdrawalRequest,
 ) (*orchestratorv1.GetWithdrawalResponse, error) {
-	ctx, span := tracer.Start(ctx, spanPrefix+opGetWithdrawal)
+	ctx, span := h.tracer.Start(ctx, spanPrefix+opGetWithdrawal)
 	defer span.End()
 
 	log := h.log.WithContext(ctx)
