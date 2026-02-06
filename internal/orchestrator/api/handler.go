@@ -43,7 +43,7 @@ func (h *Handler) CreateWithdrawal(
 	ctx, span := tracer.Start(ctx, spanPrefix+opCreateWithdrawal)
 	defer span.End()
 
-	sc := span.SpanContext()
+	log := h.log.WithContext(ctx)
 
 	span.SetAttributes(
 		attribute.String("user.id", req.GetUserId()),
@@ -52,10 +52,7 @@ func (h *Handler) CreateWithdrawal(
 		attribute.String("idempotency.key", req.GetIdempotencyKey()),
 	)
 
-	h.log.Info(opCreateWithdrawal+" start",
-		"trace_id", sc.TraceID().String(),
-		"span_id", sc.SpanID().String(),
-	)
+	log.Info(opCreateWithdrawal + " start")
 
 	res, err := h.svc.CreateWithdrawal(ctx, app.CreateWithdrawalParams{
 		UserID:          req.GetUserId(),
@@ -65,7 +62,7 @@ func (h *Handler) CreateWithdrawal(
 		IdempotencyKey:  req.GetIdempotencyKey(),
 	})
 	if err != nil {
-		return nil, h.handleError(span, opCreateWithdrawal, err)
+		return nil, h.handleError(log, span, opCreateWithdrawal, err)
 	}
 
 	span.SetAttributes(
@@ -75,9 +72,7 @@ func (h *Handler) CreateWithdrawal(
 	)
 	span.SetStatus(otelcodes.Ok, "")
 
-	h.log.Info(opCreateWithdrawal+" success",
-		"trace_id", sc.TraceID().String(),
-		"span_id", sc.SpanID().String(),
+	log.Info(opCreateWithdrawal+" success",
 		"withdrawal_id", res.WithdrawalID,
 		"status", res.Status,
 		"replay", res.IsReplay(),
@@ -96,20 +91,17 @@ func (h *Handler) GetWithdrawal(
 	ctx, span := tracer.Start(ctx, spanPrefix+opGetWithdrawal)
 	defer span.End()
 
-	sc := span.SpanContext()
+	log := h.log.WithContext(ctx)
 
 	span.SetAttributes(attribute.String("withdrawal.id", req.GetWithdrawalId()))
 
-	h.log.Info(opGetWithdrawal+" start",
-		"trace_id", sc.TraceID().String(),
-		"span_id", sc.SpanID().String(),
-	)
+	log.Info(opGetWithdrawal + " start")
 
 	res, err := h.svc.GetWithdrawal(ctx, app.GetWithdrawalParams{
 		WithdrawalID: req.GetWithdrawalId(),
 	})
 	if err != nil {
-		return nil, h.handleError(span, opGetWithdrawal, err)
+		return nil, h.handleError(log, span, opGetWithdrawal, err)
 	}
 
 	resp := &orchestratorv1.GetWithdrawalResponse{
@@ -130,21 +122,17 @@ func (h *Handler) GetWithdrawal(
 	span.SetAttributes(attribute.String("withdrawal.status", res.Status))
 	span.SetStatus(otelcodes.Ok, "")
 
-	h.log.Info(opGetWithdrawal+" success",
-		"trace_id", sc.TraceID().String(),
-		"span_id", sc.SpanID().String(),
-	)
+	log.Info(opGetWithdrawal + " success")
 
 	return resp, nil
 }
 
 func (h *Handler) handleError(
+	log *logging.Logger,
 	span trace.Span,
 	op string,
 	err error,
 ) error {
-	sc := span.SpanContext()
-
 	span.RecordError(err)
 	span.SetStatus(otelcodes.Error, op+"_failed")
 
@@ -156,22 +144,12 @@ func (h *Handler) handleError(
 			attribute.Bool("error.retryable", ae.Retryable),
 		)
 
-		h.log.Error(op+" failed",
-			"trace_id", sc.TraceID().String(),
-			"span_id", sc.SpanID().String(),
-			"code", ae.Code,
-			"retryable", ae.Retryable,
-			"err", err,
-		)
+		log.Error(op+" failed", "code", ae.Code, "retryable", ae.Retryable, "err", err)
 
 		return status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
 	}
 
-	h.log.Error(op+" failed (unknown error type)",
-		"trace_id", sc.TraceID().String(),
-		"span_id", sc.SpanID().String(),
-		"err", err,
-	)
+	log.Error(op+" failed (unknown error type)", "err", err)
 
 	return status.Error(codes.Internal, "internal error")
 }
