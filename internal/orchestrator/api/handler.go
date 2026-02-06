@@ -9,10 +9,22 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/app"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
-	"github.com/cicconee/cbsaga/internal/platform/meta"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+const (
+	opCreateWithdrawal = "create_withdrawal"
+	opGetWithdrawal    = "get_withdrawal"
+
+	spanPrefix = "orchestrator."
+)
+
+var tracer = otel.Tracer("orchestrator/api")
 
 type Handler struct {
 	orchestratorv1.UnimplementedOrchestratorServiceServer
@@ -28,15 +40,21 @@ func (h *Handler) CreateWithdrawal(
 	ctx context.Context,
 	req *orchestratorv1.CreateWithdrawalRequest,
 ) (*orchestratorv1.CreateWithdrawalResponse, error) {
-	ctx, traceID := meta.EnsureTraceID(ctx)
+	ctx, span := tracer.Start(ctx, spanPrefix+opCreateWithdrawal)
+	defer span.End()
 
-	h.log.Info("CreateWithdrawal called",
-		"trace_id", traceID,
-		"user_id", req.GetUserId(),
-		"asset", req.GetAsset(),
-		"amount_miner", req.GetAmountMinor(),
-		"destination_addr", req.GetDestinationAddr(),
-		"idempotency_key", req.GetIdempotencyKey(),
+	sc := span.SpanContext()
+
+	span.SetAttributes(
+		attribute.String("user.id", req.GetUserId()),
+		attribute.String("withdrawal.asset", req.GetAsset()),
+		attribute.Int64("withdrawal.amount.minor", req.GetAmountMinor()),
+		attribute.String("idempotency.key", req.GetIdempotencyKey()),
+	)
+
+	h.log.Info(opCreateWithdrawal+" start",
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
 	)
 
 	res, err := h.svc.CreateWithdrawal(ctx, app.CreateWithdrawalParams{
@@ -47,23 +65,19 @@ func (h *Handler) CreateWithdrawal(
 		IdempotencyKey:  req.GetIdempotencyKey(),
 	})
 	if err != nil {
-		var ae *apperr.Error
-		if errors.As(err, &ae) {
-			args := []any{"trace_id", traceID}
-			args = append(args, ae.LogArgs()...)
-			h.log.Error("CreateWithdrawal failed", args...)
-			return nil, status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
-		}
-
-		h.log.Error("CreateWithdrawal failed (unknown error type)",
-			"trace_id", traceID,
-			"err", err,
-		)
-		return nil, status.Error(codes.Internal, "internal error")
+		return nil, h.handleError(span, opCreateWithdrawal, err)
 	}
 
-	h.log.Info("CreateWithdrawal success",
-		"trace_id", traceID,
+	span.SetAttributes(
+		attribute.String("withdrawal.id", res.WithdrawalID),
+		attribute.String("withdrawal.status", res.Status),
+		attribute.Bool("idempotency.replay", res.IsReplay()),
+	)
+	span.SetStatus(otelcodes.Ok, "")
+
+	h.log.Info(opCreateWithdrawal+" success",
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
 		"withdrawal_id", res.WithdrawalID,
 		"status", res.Status,
 		"replay", res.IsReplay(),
@@ -79,30 +93,23 @@ func (h *Handler) GetWithdrawal(
 	ctx context.Context,
 	req *orchestratorv1.GetWithdrawalRequest,
 ) (*orchestratorv1.GetWithdrawalResponse, error) {
-	ctx, traceID := meta.EnsureTraceID(ctx)
+	ctx, span := tracer.Start(ctx, spanPrefix+opGetWithdrawal)
+	defer span.End()
 
-	h.log.Info("GetWithdrawal called",
-		"trace_id", traceID,
-		"withdrawal_id", req.GetWithdrawalId(),
+	sc := span.SpanContext()
+
+	span.SetAttributes(attribute.String("withdrawal.id", req.GetWithdrawalId()))
+
+	h.log.Info(opGetWithdrawal+" start",
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
 	)
 
 	res, err := h.svc.GetWithdrawal(ctx, app.GetWithdrawalParams{
 		WithdrawalID: req.GetWithdrawalId(),
 	})
 	if err != nil {
-		var ae *apperr.Error
-		if errors.As(err, &ae) {
-			args := []any{"trace_id", traceID}
-			args = append(args, ae.LogArgs()...)
-			h.log.Error("GetWithdrawal failed", args...)
-			return nil, status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
-		}
-
-		h.log.Error("GetWithdrawal failed (unknown error type)",
-			"trace_id", traceID,
-			"err", err,
-		)
-		return nil, status.Error(codes.Internal, "internal error")
+		return nil, h.handleError(span, opGetWithdrawal, err)
 	}
 
 	resp := &orchestratorv1.GetWithdrawalResponse{
@@ -117,9 +124,56 @@ func (h *Handler) GetWithdrawal(
 	}
 	if res.FailureReason != nil {
 		resp.FailureReason = *res.FailureReason
+		span.SetAttributes(attribute.String("withdrawal.failure_reason", *res.FailureReason))
 	}
 
+	span.SetAttributes(attribute.String("withdrawal.status", res.Status))
+	span.SetStatus(otelcodes.Ok, "")
+
+	h.log.Info(opGetWithdrawal+" success",
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
+	)
+
 	return resp, nil
+}
+
+func (h *Handler) handleError(
+	span trace.Span,
+	op string,
+	err error,
+) error {
+	sc := span.SpanContext()
+
+	span.RecordError(err)
+	span.SetStatus(otelcodes.Error, op+"_failed")
+
+	var ae *apperr.Error
+	if errors.As(err, &ae) {
+		span.SetAttributes(
+			attribute.String("error.type", "apperr"),
+			attribute.String("error.code", string(ae.Code)),
+			attribute.Bool("error.retryable", ae.Retryable),
+		)
+
+		h.log.Error(op+" failed",
+			"trace_id", sc.TraceID().String(),
+			"span_id", sc.SpanID().String(),
+			"code", ae.Code,
+			"retryable", ae.Retryable,
+			"err", err,
+		)
+
+		return status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
+	}
+
+	h.log.Error(op+" failed (unknown error type)",
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
+		"err", err,
+	)
+
+	return status.Error(codes.Internal, "internal error")
 }
 
 func grpcCodeFromAppCode(code apperr.Code) codes.Code {
