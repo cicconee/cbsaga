@@ -14,6 +14,7 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/grpcserver"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"github.com/cicconee/cbsaga/internal/platform/telemetry"
 	"google.golang.org/grpc"
 )
 
@@ -28,6 +29,13 @@ func main() {
 		log.Error("config load failed", "err", err)
 		os.Exit(1)
 	}
+
+	shutdown, err := telemetry.Init(ctx, cfg.OTel)
+	if err != nil {
+		log.Error("telemetry init failed", "err", err)
+		os.Exit(1)
+	}
+	defer shutdown(context.Background())
 
 	// TODO: start up time out define in configuration.
 	startupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

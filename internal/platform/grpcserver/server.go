@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cicconee/cbsaga/internal/platform/logging"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -27,7 +28,9 @@ func New(opts Options, log *logging.Logger, register func(s *grpc.Server)) (*Ser
 		return nil, err
 	}
 
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	)
 
 	hs := health.NewServer()
 	hs.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
