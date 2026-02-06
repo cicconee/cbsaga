@@ -103,19 +103,83 @@ It mirrors patterns used in real financial systems without claiming to be produc
 
 ## Getting Started
 
-The quickest way to get started is by using the `make` command. Make sure the bash scripts are marked as executable.
+The quickest way to get started is by following the **Demo Environment** section below. Make sure the bash scripts are marked as executable.
 
 ```zsh
 chmod +x scripts/*.sh
 ```
 
-By running the following command, you will spin up infrastructure, run migrations, register Debezium connectors on the Postgres WAL, build binaries, run the services, and tail the logs.
+Run the `make` command to see a list of available commands.
+
+### Demo Environment
+
+Starting `cbsaga` in the demo environment will run the containers for `golang services + Kafka (RedPanda) + RedPanda Console + Debezium + Postgres`. Also the `Grafana + Tempo + Loki + Promtail` containers will be deployed for logging and tracing. A `Grafana` dashboard is configured by default showing logs and tracing. 
+
+**Note: If you see this, tracing with `Open Telemetry` is in the process of being implemented. However, log forwarding is working and can be viewed on the dashboard. Once tracing is pushed, logs will radically debloat.**
+
+Run the command to start up `infrastructure + services + observability`:
 
 ```zsh
 make demo
 ```
 
-To kill the run you can run `make stop`. Also, `make clean` will run the `stop` command followed by the removal of the `bin` and `.run` directories.
+The dashboard can be viewed at: http://localhost:3000/d/cbsaga-obs
+
+To kill `infrastructure + service + observability` run:
+
+```zsh
+make demo-down
+make infra-down
+```
+
+To kill and destroy volumes run:
+
+```zsh
+make demo-nuke
+make infra-nuke
+```
+
+Alternatively, you can kill and destroy all containers, volumes, and any locally ran processes (`make dev`) with:
+
+```zsh
+make nuke
+```
+
+### Local Environment 
+
+Starting `cbsaga` in the local/dev environment will run the `golang services` as a binary locally, and spin up the containers for `Kafka (RedPanda) + RedPanda Console + Debezium + Postgres`. Containers for logging and tracing will not run.
+
+Run the command to build and run binaries and start up the infrastruture:
+
+```zsh
+make dev
+```
+
+To view the logs run:
+
+```zsh
+make dev-tail
+```
+
+To kill the `infrastructure + services` run:
+
+```zsh
+make dev-stop # or dev-clean to stop + remove binaries (./bin) and logs (./.run) 
+make infra-down
+```
+
+To kill services and infrastructure + destroy local binaries and logs + destroy volumes run:
+
+```zsh
+make dev-clean
+make infra-nuke
+```
+
+Alternatively, you can kill and destroy all containers, volumes, and any locally ran processes with:
+
+```zsh
+make nuke
+```
 
 ## Using the gRPC server
 
