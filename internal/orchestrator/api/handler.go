@@ -137,24 +137,37 @@ func (h *Handler) handleError(
 	err error,
 ) error {
 	span.RecordError(err)
-	span.SetStatus(otelcodes.Error, op+"_failed")
+
+	grpcCode := codes.Internal
+	msg := "internal error"
 
 	var ae *apperr.Error
 	if errors.As(err, &ae) {
+		grpcCode = grpcCodeFromAppCode(ae.Code)
+		msg = ae.Message
+
 		span.SetAttributes(
-			attribute.String("error.type", "apperr"),
-			attribute.String("error.code", string(ae.Code)),
-			attribute.Bool("error.retryable", ae.Retryable),
+			attribute.String("app.code", string(ae.Code)),
+			attribute.Bool("app.retryable", ae.Retryable),
 		)
 
-		log.Error(op+" failed", "code", ae.Code, "retryable", ae.Retryable, "err", err)
-
-		return status.Error(grpcCodeFromAppCode(ae.Code), ae.Message)
+		log.Error(op+" failed",
+			"grpc_code", grpcCode.String(),
+			"app_code", ae.Code,
+			"retryable", ae.Retryable,
+			"err", err,
+		)
+	} else {
+		log.Error(op+" failed (unknown error type)",
+			"grpc_code", grpcCode.String(),
+			"err", err,
+		)
 	}
 
-	log.Error(op+" failed (unknown error type)", "err", err)
+	span.SetAttributes(attribute.String("grpc.code", grpcCode.String()))
+	span.SetStatus(otelcodes.Error, grpcCode.String())
 
-	return status.Error(codes.Internal, "internal error")
+	return status.Error(grpcCode, msg)
 }
 
 func grpcCodeFromAppCode(code apperr.Code) codes.Code {
