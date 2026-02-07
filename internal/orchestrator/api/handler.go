@@ -51,7 +51,7 @@ func (h *Handler) CreateWithdrawal(
 	span.SetAttributes(
 		attribute.String("user.id", req.GetUserId()),
 		attribute.String("withdrawal.asset", req.GetAsset()),
-		attribute.Int64("withdrawal.amount.minor", req.GetAmountMinor()),
+		attribute.Int64("withdrawal.amount_minor", req.GetAmountMinor()),
 		attribute.String("idempotency.key", req.GetIdempotencyKey()),
 	)
 
