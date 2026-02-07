@@ -21,7 +21,7 @@ const (
 	opCreateWithdrawal = "create_withdrawal"
 	opGetWithdrawal    = "get_withdrawal"
 
-	spanPrefix = "orchestrator."
+	spanPrefix = "orchestrator.api."
 )
 
 type Handler struct {
