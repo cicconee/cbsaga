@@ -40,7 +40,7 @@ func (s *Service) failAndReconcile(
 
 	span.SetAttributes(attribute.String("idempotency.key", p.IdempotencyKey))
 
-	errf := errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
+	errf := errFailed(tr.Err).WithAttrs(tr.Attrs)
 	p.AppErrorCode = &errf.Code
 	p.ErrorMessage = &errf.Message
 
@@ -108,7 +108,7 @@ func (s *Service) reconcile(
 		span.RecordError(err)
 		span.SetAttributes(attribute.String("reconcile.outcome", "get_idem_failed"))
 		span.SetStatus(codes.Error, "internal")
-		return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
+		return CreateWithdrawalResult{}, errInternal(err)
 	}
 
 	span.SetAttributes(
@@ -126,7 +126,7 @@ func (s *Service) reconcile(
 				attribute.String("invariant", "idem_completed_missing_response_body"),
 			)
 			span.SetStatus(codes.Error, "internal")
-			return CreateWithdrawalResult{}, errInternal(StepReconcile, errInv)
+			return CreateWithdrawalResult{}, errInternal(errInv)
 		}
 
 		var res CreateWithdrawalResult
@@ -134,7 +134,7 @@ func (s *Service) reconcile(
 			span.RecordError(err)
 			span.SetAttributes(attribute.String("reconcile.outcome", "decode_response_failed"))
 			span.SetStatus(codes.Error, "internal")
-			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
+			return CreateWithdrawalResult{}, errInternal(err)
 		}
 
 		res.replay = true
@@ -155,7 +155,7 @@ func (s *Service) reconcile(
 				attribute.String("invariant", "idem_failed_missing_error_fields"),
 			)
 			span.SetStatus(codes.Error, "internal")
-			return CreateWithdrawalResult{}, errInternal(StepReconcile, errInv)
+			return CreateWithdrawalResult{}, errInternal(errInv)
 		}
 
 		span.SetAttributes(
@@ -166,8 +166,6 @@ func (s *Service) reconcile(
 
 		return CreateWithdrawalResult{}, apperr.New(
 			*idemRow.AppErrorCode,
-			SubjectWithdrawalCreate,
-			StepReconcile,
 			*idemRow.ErrorMessage,
 			false,
 			nil,
@@ -186,6 +184,6 @@ func (s *Service) reconcile(
 	default:
 		span.SetAttributes(attribute.String("reconcile.outcome", "unknown_status"))
 		span.SetStatus(codes.Error, "internal")
-		return CreateWithdrawalResult{}, errInternal(StepReconcile, nil)
+		return CreateWithdrawalResult{}, errInternal(nil)
 	}
 }

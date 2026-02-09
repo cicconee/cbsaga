@@ -90,7 +90,7 @@ func (s *Service) CreateWithdrawal(
 	v, err := NewValidatedCreateWithdrawal(p)
 	if err != nil {
 		span.SetAttributes(attribute.Bool("withdrawal.valid", false))
-		return CreateWithdrawalResult{}, errInvalidArgument(StepCreateWithdrawal, err)
+		return CreateWithdrawalResult{}, errInvalidArgument(err)
 	}
 	span.SetAttributes(attribute.String("idempotency.request_hash", v.RequestHash))
 
@@ -288,7 +288,7 @@ func (s *Service) reserveIdempotency(
 		case errors.Is(err, repo.ErrIdempotencyKeyReuse):
 			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_key_reuse"))
 			span.SetStatus(codes.Ok, "")
-			return repo.ReserveIdemResult{}, errInvalidArgument(StepReserveIdempotency, err)
+			return repo.ReserveIdemResult{}, errInvalidArgument(err)
 		case errors.As(err, &cu):
 			span.SetAttributes(attribute.String("idempotency.outcome", "commit_unknown"))
 			span.SetStatus(codes.Error, "commit_unknown")
@@ -298,7 +298,7 @@ func (s *Service) reserveIdempotency(
 			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_failed"))
 			span.SetStatus(codes.Error, "reserve_idempotency_failed")
 			span.RecordError(err)
-			return repo.ReserveIdemResult{}, errInternal(StepReserveIdempotency, err)
+			return repo.ReserveIdemResult{}, errInternal(err)
 		}
 	}
 

@@ -17,8 +17,6 @@ const (
 
 type Error struct {
 	Code      Code
-	Subject   string
-	Step      string
 	Message   string // safe to expose
 	Retryable bool
 	Cause     error
@@ -58,19 +56,15 @@ func (e *Error) Unwrap() error {
 func (e *Error) LogArgs() []any {
 	return fields.New().
 		Str("app_code", string(e.Code)).
-		Str("subject", e.Subject).
-		Str("step", e.Step).
 		Str("message", e.Message).
 		Bool("retryable", e.Retryable).
 		Merge(e.attrs).
 		Args()
 }
 
-func New(code Code, subject string, step string, msg string, retryable bool, cause error) *Error {
+func New(code Code, msg string, retryable bool, cause error) *Error {
 	return &Error{
 		Code:      code,
-		Subject:   subject,
-		Step:      step,
 		Message:   msg,
 		Retryable: retryable,
 		Cause:     cause,

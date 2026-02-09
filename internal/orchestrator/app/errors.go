@@ -8,51 +8,32 @@ import (
 
 var (
 	ErrInvalidIdempotencyKeyReuse = errors.New("idempotency key reused with different request")
-
-	ErrIdempotencyInProgress = errors.New("idempotent request in progress")
-
-	ErrCreateWithdrawalFailed = errors.New("could not create withdrawal request")
+	ErrIdempotencyInProgress      = errors.New("idempotent request in progress")
+	ErrCreateWithdrawalFailed     = errors.New("could not create withdrawal request")
 )
 
-func errInvalidArgument(step string, err error) *apperr.Error {
+func errInvalidArgument(err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeInvalidArgument,
-		SubjectWithdrawalCreate,
-		step,
 		"invalid arguments; resubmit a new request",
 		false,
 		err,
 	)
 }
 
-func errFailed(step string, err error) *apperr.Error {
+func errFailed(err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeFailed,
-		SubjectWithdrawalCreate,
-		step,
 		"failed to create a withdrawal; resubmit a new request",
 		false,
 		err,
 	)
 }
 
-func errInternal(step string, err error) *apperr.Error {
+func errInternal(err error) *apperr.Error {
 	return apperr.New(
 		apperr.CodeInternal,
-		SubjectWithdrawalCreate,
-		step,
 		"unable to process request; please retry",
-		true,
-		err,
-	)
-}
-
-func errRetryableConflict(step string, err error) *apperr.Error {
-	return apperr.New(
-		apperr.CodeRetryableConflict,
-		SubjectWithdrawalCreate,
-		step,
-		"request is still in progress; please retry",
 		true,
 		err,
 	)
