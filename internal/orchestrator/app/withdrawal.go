@@ -9,26 +9,33 @@ import (
 	orchestrator "github.com/cicconee/cbsaga/internal/contracts/kafka/orchestrator/v1"
 	"github.com/cicconee/cbsaga/internal/orchestrator/domain"
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
+	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
 	"github.com/cicconee/cbsaga/internal/platform/logging"
-	"github.com/cicconee/cbsaga/internal/platform/meta"
+	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Service struct {
-	db   *pgxpool.Pool
-	repo *repo.Repo
-	log  *logging.Logger
+	db     *pgxpool.Pool
+	repo   *repo.Repo
+	log    *logging.Logger
+	tracer trace.Tracer
 }
 
 func NewService(db *pgxpool.Pool, log *logging.Logger) *Service {
 	return &Service{
-		db:   db,
-		repo: repo.New(),
-		log:  log,
+		db:     db,
+		repo:   repo.New(),
+		log:    log,
+		tracer: otel.Tracer("orchestrator/app"),
 	}
 }
 
@@ -53,16 +60,209 @@ func (r *CreateWithdrawalResult) IsReplay() bool {
 func (s *Service) CreateWithdrawal(
 	ctx context.Context,
 	p CreateWithdrawalParams,
-) (CreateWithdrawalResult, error) {
-	now := time.Now().UTC()
-	ctx, traceID := meta.EnsureTraceID(ctx)
+) (res CreateWithdrawalResult, err error) {
+	ctx, span := s.tracer.Start(ctx, "orchestrator.app.create_withdrawal")
+	defer span.End()
+	defer func() {
+		if err == nil {
+			if res.IsReplay() {
+				span.SetAttributes(attribute.String("withdrawal.outcome", "replay"))
+			} else {
+				span.SetAttributes(attribute.String("withdrawal.outcome", "success"))
+			}
+			span.SetStatus(codes.Ok, "")
+			return
+		}
+
+		var ae *apperr.Error
+		isBusinessError := errors.As(err, &ae) && ae.Code != apperr.CodeInternal
+		if isBusinessError {
+			span.SetAttributes(attribute.String("withdrawal.outcome", "business_error"))
+			span.SetStatus(codes.Ok, "")
+			return
+		}
+
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("withdrawal.outcome", "failed"))
+		span.SetStatus(codes.Error, "internal")
+	}()
 
 	v, err := NewValidatedCreateWithdrawal(p)
 	if err != nil {
+		span.SetAttributes(attribute.Bool("withdrawal.valid", false))
+		return CreateWithdrawalResult{}, errInvalidArgument(StepCreateWithdrawal, err)
+	}
+	span.SetAttributes(attribute.String("idempotency.request_hash", v.RequestHash))
+
+	idemRow, err := s.reserveIdempotency(ctx, v)
+	if err != nil {
+		var cu *postgres.CommitUnknownError
+		if errors.As(err, &cu) {
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		}
+
 		return CreateWithdrawalResult{}, err
 	}
 
-	// Reserve the idempotency key
+	if !idemRow.Owned {
+		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+	}
+
+	return s.createWithdrawalWork(ctx, v, idemRow)
+}
+
+var (
+	errNeedReconcileAlreadyExists    = errors.New("already_exists")
+	errNeedReconcileLostLease        = errors.New("lost_lease")
+	errNeedReconcileAlreadyFinalized = errors.New("already_finalized")
+)
+
+func (s *Service) createWithdrawalWork(
+	ctx context.Context,
+	v validatedCreateWithdrawal,
+	idemRow repo.ReserveIdemResult,
+) (CreateWithdrawalResult, error) {
+	ctx, span := s.tracer.Start(ctx, "orchestrator.app.create_withdrawal.work")
+	defer span.End()
+	sc := span.SpanContext()
+
+	span.SetAttributes(attribute.String("withdrawal.id", idemRow.WithdrawalID))
+
+	finalParams := repo.FinalizeIdemParams{
+		UserID:         v.UserID,
+		IdempotencyKey: v.IdempotencyKey,
+		LeaseAttemptID: idemRow.LeaseOwner,
+		LeaseFence:     idemRow.LeaseFence,
+	}
+
+	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
+		WithdrawalID: idemRow.WithdrawalID,
+		UserID:       v.UserID,
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "encode_identity_failed")
+		tr := newTrigger(StepCreateWithdrawal, "encode_identity_payload", err)
+		return s.failAndReconcile(ctx, finalParams, tr)
+	}
+	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
+		WithdrawalID: idemRow.WithdrawalID,
+		UserID:       v.UserID,
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "encode_withdrawal_failed")
+		tr := newTrigger(StepCreateWithdrawal, "encode_withdrawal_payload", err)
+		return s.failAndReconcile(ctx, finalParams, tr)
+	}
+
+	txFunc := func(ctx context.Context, tx pgx.Tx) (CreateWithdrawalResult, error) {
+		workRes, err := s.repo.CreateWithdrawalTx(ctx, tx, repo.CreateWithdrawalParams{
+			WithdrawalID:    idemRow.WithdrawalID,
+			SagaID:          uuid.NewString(),
+			UserID:          v.UserID,
+			Asset:           v.Asset,
+			AmountMinor:     v.AmountMinor,
+			DestinationAddr: v.DestinationAddr,
+			TraceID:         sc.TraceID().String(),
+			OutboxEvents: []repo.OutboxEvent{
+				{
+					EventType: orchestrator.EventTypeWithdrawalRequested,
+					Payload:   string(withdrawPayload),
+					RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
+				},
+				{
+					EventType: identity.EventTypeIdentityRequested,
+					Payload:   string(identityPayload),
+					RouteKey:  identity.RouteKeyIdentityCmd,
+				},
+			},
+		})
+		if err != nil {
+			if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
+				return CreateWithdrawalResult{}, errNeedReconcileAlreadyExists
+			}
+			return CreateWithdrawalResult{}, err
+		}
+
+		res := CreateWithdrawalResult{
+			WithdrawalID: workRes.WithdrawalID,
+			Status:       workRes.Status,
+		}
+		respBody, err := codec.EncodeJSONPtr(res)
+		if err != nil {
+			return CreateWithdrawalResult{}, err
+		}
+		finalParams.ResponseBody = respBody
+
+		outcome, err := s.completeIdempotency(ctx, tx, finalParams)
+		if err != nil {
+			if errors.Is(err, repo.ErrLostLeaseOwnership) {
+				return CreateWithdrawalResult{}, errNeedReconcileLostLease
+			}
+			return CreateWithdrawalResult{}, err
+		}
+		if outcome == repo.FinalizeAlreadyFinalized {
+			return CreateWithdrawalResult{}, errNeedReconcileAlreadyFinalized
+		}
+
+		return res, nil
+	}
+
+	res, err := postgres.WithTxRetryResult(
+		ctx,
+		s.db,
+		pgx.TxOptions{},
+		"withdrawal/create",
+		retry.DefaultConfig(),
+		txFunc,
+	)
+	if err != nil {
+		var cu *postgres.CommitUnknownError
+		if errors.As(err, &cu) {
+			span.SetAttributes(attribute.String("withdrawal.work.outcome", "commit_unknown"))
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "commit_unknown")
+
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			return s.reconcile(rctx, v.UserID, v.IdempotencyKey)
+		}
+
+		switch {
+		case errors.Is(err, errNeedReconcileAlreadyExists):
+			span.SetStatus(codes.Ok, "")
+			span.SetAttributes(attribute.String("withdrawal.work.outcome", "already_exists"))
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		case errors.Is(err, errNeedReconcileLostLease):
+			span.SetStatus(codes.Ok, "")
+			span.SetAttributes(attribute.String("withdrawal.work.outcome", "lost_lease"))
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		case errors.Is(err, errNeedReconcileAlreadyFinalized):
+			span.SetStatus(codes.Ok, "")
+			span.SetAttributes(attribute.String("withdrawal.work.outcome", "already_finalized"))
+			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
+		}
+
+		span.SetAttributes(attribute.String("withdrawal.work.outcome", "withdrawal_work_failed"))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "withdrawal_tx_failed")
+		tr := newTrigger(StepCreateWithdrawal, "withdrawal_tx_failed", err)
+		return s.failAndReconcile(ctx, finalParams, tr)
+	}
+
+	span.SetStatus(codes.Ok, "")
+	span.SetAttributes(attribute.String("withdrawal.work.outcome", "ok"))
+	return res, nil
+}
+
+func (s *Service) reserveIdempotency(
+	ctx context.Context,
+	v validatedCreateWithdrawal,
+) (repo.ReserveIdemResult, error) {
+	ctx, span := s.tracer.Start(ctx, "orchestrator.app.reserve_idempotency")
+	defer span.End()
+
 	reserveTxFunc := func(ctx context.Context, tx pgx.Tx) (repo.ReserveIdemResult, error) {
 		return s.repo.ReserveIdemTx(ctx, tx, repo.ReserveIdemParams{
 			UserID:         v.UserID,
@@ -82,146 +282,34 @@ func (s *Service) CreateWithdrawal(
 		reserveTxFunc,
 	)
 	if err != nil {
-		if errors.Is(err, repo.ErrIdempotencyKeyReuse) {
-			return CreateWithdrawalResult{}, errInvalidArgument(StepReserveIdempotency, err)
+
+		var cu *postgres.CommitUnknownError
+		switch {
+		case errors.Is(err, repo.ErrIdempotencyKeyReuse):
+			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_key_reuse"))
+			span.SetStatus(codes.Ok, "")
+			return repo.ReserveIdemResult{}, errInvalidArgument(StepReserveIdempotency, err)
+		case errors.As(err, &cu):
+			span.SetAttributes(attribute.String("idempotency.outcome", "commit_unknown"))
+			span.SetStatus(codes.Error, "commit_unknown")
+			span.RecordError(err)
+			return repo.ReserveIdemResult{}, err
+		default:
+			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_failed"))
+			span.SetStatus(codes.Error, "reserve_idempotency_failed")
+			span.RecordError(err)
+			return repo.ReserveIdemResult{}, errInternal(StepReserveIdempotency, err)
 		}
-
-		var cu postgres.CommitUnknownError
-		if errors.As(err, &cu) {
-			key := reconcileKey{
-				UserID:  v.UserID,
-				IdemKey: v.IdempotencyKey,
-			}
-			tr := newTrigger(StepReserveIdempotency, "commit_reserve_tx", err)
-			return s.reconcileAndRecover(ctx, key, tr)
-		}
-
-		return CreateWithdrawalResult{}, errInternal(StepReserveIdempotency, err)
 	}
 
-	reconcileKey := reconcileKey{
-		UserID:       v.UserID,
-		IdemKey:      v.IdempotencyKey,
-		WithdrawalID: idemRow.WithdrawalID,
-	}
-	// Reserve idempotency transaction is committed and idempotency key is reserved in db
-	// but current run does not own it.
-	if !idemRow.Owned {
-		tr := newTrigger(StepReserveIdempotency, "idempotency_not_owned", nil)
-		return s.reconcileAndRecover(ctx, reconcileKey, tr)
-	}
+	span.SetAttributes(
+		attribute.String("withdrawal.id", idemRow.WithdrawalID),
+		attribute.Bool("idempotency.owned", idemRow.Owned),
+		attribute.String("idempotency.outcome", "reserved"),
+	)
+	span.SetStatus(codes.Ok, "")
 
-	// begin tx that will create the withdrawal.
-	finalParams := repo.FinalizeIdemParams{
-		UserID:         v.UserID,
-		IdempotencyKey: v.IdempotencyKey,
-		LeaseAttemptID: idemRow.LeaseOwner,
-		LeaseFence:     idemRow.LeaseFence,
-	}
-
-	workTx, err := s.db.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		tr := newTrigger(StepCreateWithdrawal, "begin_work_tx", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-	defer func() { _ = workTx.Rollback(ctx) }()
-
-	// Encode payloads for the outbox_events tables.
-	identityPayload, err := codec.EncodeValid(&identity.IdentityRequestCmdPayload{
-		WithdrawalID: idemRow.WithdrawalID,
-		UserID:       v.UserID,
-	})
-	if err != nil {
-		tr := newTrigger(StepCreateWithdrawal, "encode_identity_payload", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
-		WithdrawalID: idemRow.WithdrawalID,
-		UserID:       v.UserID,
-	})
-	if err != nil {
-		tr := newTrigger(StepCreateWithdrawal, "encode_withdrawal_payload", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-
-	res, err := s.repo.CreateWithdrawalTx(ctx, workTx, repo.CreateWithdrawalParams{
-		WithdrawalID:    idemRow.WithdrawalID,
-		SagaID:          uuid.NewString(),
-		UserID:          v.UserID,
-		Asset:           v.Asset,
-		AmountMinor:     v.AmountMinor,
-		DestinationAddr: v.DestinationAddr,
-		TraceID:         traceID,
-		OutboxEvents: []repo.OutboxEvent{
-			{
-				EventType: orchestrator.EventTypeWithdrawalRequested,
-				Payload:   string(withdrawPayload),
-				RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
-			},
-			{
-				EventType: identity.EventTypeIdentityRequested,
-				Payload:   string(identityPayload),
-				RouteKey:  identity.RouteKeyIdentityCmd,
-			},
-		},
-	})
-	if err != nil {
-		// If withdrawal already exists some how, reconcile, do not mark as failure.
-		if errors.Is(err, repo.ErrWithdrawalAlreadyExists) {
-			tr := newTrigger(StepCreateWithdrawal, "withdrawal_already_exists", err)
-			return s.reconcileAndRecover(ctx, reconcileKey, tr)
-		}
-		tr := newTrigger(StepCreateWithdrawal, "create_withdrawal", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-
-	createWithdrawalResult := CreateWithdrawalResult{
-		WithdrawalID: res.WithdrawalID,
-		Status:       res.Status,
-	}
-	respBody, err := codec.EncodeJSONPtr(createWithdrawalResult)
-	if err != nil {
-		tr := newTrigger(StepCreateWithdrawal, "encode_response_body", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-	finalParams.ResponseBody = respBody
-
-	// Mark the idempotency key as completed status.
-	outcome, err := s.completeIdempotency(ctx, workTx, finalParams)
-	if err != nil {
-		if errors.Is(err, repo.ErrLostLeaseOwnership) {
-			tr := newTrigger(StepCreateWithdrawal, "lost_lease_ownership", err)
-			return s.reconcileAndRecover(ctx, reconcileKey, tr)
-		}
-		tr := newTrigger(StepCreateWithdrawal, "completed_idempotency", err)
-		return s.failAndReconcile(ctx, finalParams, reconcileKey, tr)
-	}
-
-	// This current run took too long from the moment of ownership till now, that
-	// another run gained ownership of the lease and already finalized the withdrawal request.
-	if outcome == repo.FinalizeAlreadyFinalized {
-		tr := newTrigger(StepCreateWithdrawal, "idempotency_already_finalize", err)
-		return s.reconcileAndRecover(ctx, reconcileKey, tr)
-	}
-
-	// Commit the atomic transaction: finalizes idempotency key status and inserts withdrawal.
-	if err := workTx.Commit(ctx); err != nil {
-		trigger := postgres.CommitUnknownError{
-			Op:       "withdrawal/work_tx_commit",
-			Err:      err,
-			Duration: time.Since(now), // place holder until wrap in WithTx
-			CtxErr:   ctx.Err(),
-		}
-
-		// Outcome unknown
-		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		tr := newTrigger(StepCreateWithdrawal, "commit_work_tx", trigger)
-		return s.reconcileAndRecover(rctx, reconcileKey, tr)
-	}
-
-	return createWithdrawalResult, nil
+	return idemRow, nil
 }
 
 func (s *Service) completeIdempotency(

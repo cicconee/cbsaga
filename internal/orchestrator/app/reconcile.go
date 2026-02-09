@@ -9,15 +9,9 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/fields"
-	"github.com/cicconee/cbsaga/internal/platform/meta"
-	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
-
-type reconcileKey struct {
-	UserID       string
-	IdemKey      string
-	WithdrawalID string
-}
 
 type trigger struct {
 	Step  string
@@ -39,67 +33,61 @@ func newTrigger(step string, reason string, err error) trigger {
 func (s *Service) failAndReconcile(
 	ctx context.Context,
 	p repo.FinalizeIdemParams,
-	key reconcileKey,
 	tr trigger,
 ) (CreateWithdrawalResult, error) {
-	errf := errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
+	ctx, span := s.tracer.Start(ctx, "orchestrator.app.fail_and_reconcile")
+	defer span.End()
 
+	span.SetAttributes(attribute.String("idempotency.key", p.IdempotencyKey))
+
+	errf := errFailed(tr.Step, tr.Err).WithAttrs(tr.Attrs)
 	p.AppErrorCode = &errf.Code
 	p.ErrorMessage = &errf.Message
+
 	outcome, err := s.failIdempotencyWithRetry(ctx, p)
+	finalizeFault := err != nil
 	if err == nil && outcome == repo.FinalizeApplied {
+		span.SetAttributes(
+			attribute.String("fail.finalize", "applied"),
+			attribute.String("fail.recovery", "not_needed"),
+		)
+		span.SetStatus(codes.Ok, "")
 		return CreateWithdrawalResult{}, errf
 	}
 
-	var outcomeStr string
 	if err != nil {
-		outcomeStr = "finalize_error"
+		span.RecordError(err)
+		span.SetAttributes(
+			attribute.String("fail.finalize", "error"),
+			attribute.String("internal.fault.name", "finalize_idempotency_failed"),
+		)
+		span.SetStatus(codes.Error, "apply_failed")
 	} else {
-		outcomeStr = "finalize_already_applied"
+		span.SetAttributes(attribute.String("fail.finalize", "already_finalized"))
 	}
-	tr.Attrs = fields.New().
-		Merge(tr.Attrs).
-		Str("path", "fail_and_reconcile").
-		Str("finalize_outcome", outcomeStr).
-		Error("finalize_err", err)
 
-	return s.reconcileAndRecover(ctx, key, tr)
-}
-
-func (s *Service) reconcileAndRecover(
-	ctx context.Context,
-	key reconcileKey,
-	tr trigger,
-) (CreateWithdrawalResult, error) {
-	ctx, traceID := meta.EnsureTraceID(ctx)
-	res, rerr := s.reconcile(ctx, key.UserID, key.IdemKey)
-
-	logAttrs := fields.New().
-		Str("trace_id", traceID).
-		Str("user_id", key.UserID).
-		Str("idempotency_key", key.IdemKey).
-		Str("withdrawal_id", key.WithdrawalID).
-		Merge(tr.Attrs)
-
+	res, rerr := s.reconcile(ctx, p.UserID, p.IdempotencyKey)
 	if rerr == nil {
-		s.log.Debug("recovered via reconcile (success)", logAttrs.Args()...)
+		span.SetAttributes(attribute.String("fail.recovery", "ok"))
+		if !finalizeFault {
+			span.SetStatus(codes.Ok, "")
+		}
 		return res, nil
 	}
 
-	errAttrs := fields.New().
-		Str("withdrawal_id", key.WithdrawalID).
-		Merge(tr.Attrs).
-		Error("recover_err", rerr)
-
 	var ae *apperr.Error
-	if errors.As(rerr, &ae) {
-		if ae.Code != apperr.CodeInternal {
-			s.log.Debug("recovered via reconcile (determined outcome)", logAttrs.Args()...)
+	if errors.As(rerr, &ae) && ae.Code != apperr.CodeInternal {
+		span.SetAttributes(attribute.String("fail.recovery", "business_error"))
+		if !finalizeFault {
+			span.SetStatus(codes.Ok, "")
 		}
-		return CreateWithdrawalResult{}, ae.WithAttrs(errAttrs)
+		return CreateWithdrawalResult{}, rerr
 	}
 
-	return CreateWithdrawalResult{}, errInternal(StepReconcile, rerr).WithAttrs(errAttrs)
+	span.RecordError(rerr)
+	span.SetAttributes(attribute.String("fail.recovery", "internal_error"))
+	span.SetStatus(codes.Error, "internal")
+	return CreateWithdrawalResult{}, rerr
 }
 
 func (s *Service) reconcile(
@@ -107,70 +95,97 @@ func (s *Service) reconcile(
 	userID string,
 	idemKey string,
 ) (CreateWithdrawalResult, error) {
+	ctx, span := s.tracer.Start(ctx, "orchestrator.app.reconcile")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("idempotency.key", idemKey))
+
 	idemRow, err := s.repo.GetIdem(ctx, s.db, repo.GetIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 	})
 	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("reconcile.outcome", "get_idem_failed"))
+		span.SetStatus(codes.Error, "internal")
 		return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
 	}
 
+	span.SetAttributes(
+		attribute.String("idempotency.status", idemRow.Status),
+		attribute.String("withdrawal.id", idemRow.WithdrawalID),
+	)
+
 	switch idemRow.Status {
 	case domain.IdemCompleted:
-		w, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
-			WithdrawalID: idemRow.WithdrawalID,
-		})
-		if err != nil {
-			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
-		}
-		if idemRow.ResponseBody != nil {
-			var res CreateWithdrawalResult
-			if err := codec.DecodeJSONPtr(idemRow.ResponseBody, &res); err != nil {
-				return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
-			}
-			res.replay = true
-			return res, nil
+		if idemRow.ResponseBody == nil {
+			errInv := errors.New("invariant violation: idem completed with NULL response_body")
+			span.RecordError(errInv)
+			span.SetAttributes(
+				attribute.String("reconcile.outcome", "invariant_violation"),
+				attribute.String("invariant", "idem_completed_missing_response_body"),
+			)
+			span.SetStatus(codes.Error, "internal")
+			return CreateWithdrawalResult{}, errInternal(StepReconcile, errInv)
 		}
 
-		// Fallback - maybe error, not sure yet. Leaning towards error.
-		return CreateWithdrawalResult{
-			WithdrawalID: w.WithdrawalID,
-			Status:       domain.WithdrawalStatusRequested,
-			replay:       true,
-		}, nil
+		var res CreateWithdrawalResult
+		if err := codec.DecodeJSONPtr(idemRow.ResponseBody, &res); err != nil {
+			span.RecordError(err)
+			span.SetAttributes(attribute.String("reconcile.outcome", "decode_response_failed"))
+			span.SetStatus(codes.Error, "internal")
+			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
+		}
+
+		res.replay = true
+		span.SetAttributes(
+			attribute.String("reconcile.outcome", "replayed_completed"),
+			attribute.Bool("idempotency.replay", true),
+		)
+		span.SetStatus(codes.Ok, "")
+		return res, nil
 	case domain.IdemFailed:
-		if idemRow.AppErrorCode != nil && idemRow.ErrorMessage != nil {
-			return CreateWithdrawalResult{}, apperr.New(
-				*idemRow.AppErrorCode,
-				SubjectWithdrawalCreate,
-				StepReconcile,
-				*idemRow.ErrorMessage,
-				false,
-				nil,
-			).WithAttr("replay", true)
+		if idemRow.AppErrorCode == nil || idemRow.ErrorMessage == nil {
+			errInv := errors.New(
+				"invariant violation: idem failed with NULL error_code/error_message",
+			)
+			span.RecordError(errInv)
+			span.SetAttributes(
+				attribute.String("reconcile.outcome", "invariant_violation"),
+				attribute.String("invariant", "idem_failed_missing_error_fields"),
+			)
+			span.SetStatus(codes.Error, "internal")
+			return CreateWithdrawalResult{}, errInternal(StepReconcile, errInv)
 		}
 
-		// Fallback - maybe error (not replay error), not sure yet. Leaning towards error.
-		err := errFailed(StepReconcile, nil).
-			WithAttr("replay", true).
-			WithAttr("replay_not_found", true)
-		return CreateWithdrawalResult{}, err
+		span.SetAttributes(
+			attribute.String("reconcile.outcome", "replayed_failed"),
+			attribute.Bool("idempotency.replay", true),
+		)
+		span.SetStatus(codes.Ok, "")
+
+		return CreateWithdrawalResult{}, apperr.New(
+			*idemRow.AppErrorCode,
+			SubjectWithdrawalCreate,
+			StepReconcile,
+			*idemRow.ErrorMessage,
+			false,
+			nil,
+		).WithAttr("replay", true)
 	case domain.IdemInProgress:
-		existingWithdrawal, err := s.repo.GetWithdrawal(ctx, s.db, repo.GetWithdrawalParams{
+		// Concurrent requests may see IN_PROGRESS status, before the owner request flips status to
+		// COMPLETED/FAILED. For simplicity, do not recheck. Either the owner request will return
+		// the finalized status correctly, or a request retry will. To avoid unnecessary requests,
+		// this should reread the idempotency row and/or the withdrawal row.
+		span.SetAttributes(attribute.String("reconcile.outcome", "in_progress"))
+		span.SetStatus(codes.Ok, "")
+		return CreateWithdrawalResult{
 			WithdrawalID: idemRow.WithdrawalID,
-		})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return CreateWithdrawalResult{}, errInternal(StepReconcile, err)
-		}
-		if err == nil {
-			return CreateWithdrawalResult{
-				WithdrawalID: existingWithdrawal.WithdrawalID,
-				Status:       domain.WithdrawalStatusRequested,
-			}, nil
-		}
-
-		return CreateWithdrawalResult{}, errRetryableConflict(StepReconcile, err)
+			Status:       domain.WithdrawalStatusInProgress,
+		}, nil
 	default:
+		span.SetAttributes(attribute.String("reconcile.outcome", "unknown_status"))
+		span.SetStatus(codes.Error, "internal")
 		return CreateWithdrawalResult{}, errInternal(StepReconcile, nil)
 	}
 }
