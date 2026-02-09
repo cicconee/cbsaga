@@ -8,39 +8,21 @@ import (
 	"github.com/cicconee/cbsaga/internal/orchestrator/repo"
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
-	"github.com/cicconee/cbsaga/internal/platform/fields"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
 
-type trigger struct {
-	Step  string
-	Err   error
-	Attrs *fields.Attrs
-}
-
-func newTrigger(step string, reason string, err error) trigger {
-	return trigger{
-		Step: step,
-		Err:  err,
-		Attrs: fields.New().
-			Str("trigger_step", step).
-			Str("trigger_reason", reason).
-			Error("trigger_err", err),
-	}
-}
-
 func (s *Service) failAndReconcile(
 	ctx context.Context,
 	p repo.FinalizeIdemParams,
-	tr trigger,
+	cause error,
 ) (CreateWithdrawalResult, error) {
 	ctx, span := s.tracer.Start(ctx, "orchestrator.app.fail_and_reconcile")
 	defer span.End()
 
 	span.SetAttributes(attribute.String("idempotency.key", p.IdempotencyKey))
 
-	errf := errFailed(tr.Err).WithAttrs(tr.Attrs)
+	errf := errFailed(cause)
 	p.AppErrorCode = &errf.Code
 	p.ErrorMessage = &errf.Message
 

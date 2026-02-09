@@ -142,8 +142,7 @@ func (s *Service) createWithdrawalWork(
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "encode_identity_failed")
-		tr := newTrigger(StepCreateWithdrawal, "encode_identity_payload", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, err)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
 		WithdrawalID: idemRow.WithdrawalID,
@@ -152,8 +151,7 @@ func (s *Service) createWithdrawalWork(
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "encode_withdrawal_failed")
-		tr := newTrigger(StepCreateWithdrawal, "encode_withdrawal_payload", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, err)
 	}
 
 	txFunc := func(ctx context.Context, tx pgx.Tx) (CreateWithdrawalResult, error) {
@@ -247,8 +245,7 @@ func (s *Service) createWithdrawalWork(
 		span.SetAttributes(attribute.String("withdrawal.work.outcome", "withdrawal_work_failed"))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "withdrawal_tx_failed")
-		tr := newTrigger(StepCreateWithdrawal, "withdrawal_tx_failed", err)
-		return s.failAndReconcile(ctx, finalParams, tr)
+		return s.failAndReconcile(ctx, finalParams, err)
 	}
 
 	span.SetStatus(codes.Ok, "")
