@@ -156,6 +156,7 @@ func (h *Handler) handleError(
 			"app_code", ae.Code,
 			"retryable", ae.Retryable,
 			"err", err,
+			"cause", ae.Cause,
 		)
 	} else {
 		log.Error(op+" failed (unknown error type)",
