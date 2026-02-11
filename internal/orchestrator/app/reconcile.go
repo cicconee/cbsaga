@@ -9,7 +9,6 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 func (s *Service) failAndReconcile(
@@ -17,59 +16,28 @@ func (s *Service) failAndReconcile(
 	p repo.FinalizeIdemParams,
 	cause error,
 ) (CreateWithdrawalResult, error) {
-	ctx, span := s.tracer.Start(ctx, "orchestrator.app.fail_and_reconcile")
+	ctx, span := s.tracer.Start(ctx, spanFailReconcile)
 	defer span.End()
 
-	span.SetAttributes(attribute.String("idempotency.key", p.IdempotencyKey))
+	span.SetAttributes(
+		attribute.String(telKeyPhase, "fail_and_reconcile"),
+		attribute.String(telKeyIdemKey, p.IdempotencyKey),
+	)
 
 	errf := errFailed(cause)
 	p.AppErrorCode = &errf.Code
 	p.ErrorMessage = &errf.Message
 
 	outcome, err := s.failIdempotencyWithRetry(ctx, p)
-	finalizeFault := err != nil
 	if err == nil && outcome == repo.FinalizeApplied {
-		span.SetAttributes(
-			attribute.String("fail.finalize", "applied"),
-			attribute.String("fail.recovery", "not_needed"),
-		)
-		span.SetStatus(codes.Ok, "")
 		return CreateWithdrawalResult{}, errf
 	}
 
 	if err != nil {
-		span.RecordError(err)
-		span.SetAttributes(
-			attribute.String("fail.finalize", "error"),
-			attribute.String("internal.fault.name", "finalize_idempotency_failed"),
-		)
-		span.SetStatus(codes.Error, "apply_failed")
-	} else {
-		span.SetAttributes(attribute.String("fail.finalize", "already_finalized"))
+		recordInternal(span, err, "finalize_failed")
 	}
 
-	res, rerr := s.reconcile(ctx, p.UserID, p.IdempotencyKey)
-	if rerr == nil {
-		span.SetAttributes(attribute.String("fail.recovery", "ok"))
-		if !finalizeFault {
-			span.SetStatus(codes.Ok, "")
-		}
-		return res, nil
-	}
-
-	var ae *apperr.Error
-	if errors.As(rerr, &ae) && ae.Code != apperr.CodeInternal {
-		span.SetAttributes(attribute.String("fail.recovery", "business_error"))
-		if !finalizeFault {
-			span.SetStatus(codes.Ok, "")
-		}
-		return CreateWithdrawalResult{}, rerr
-	}
-
-	span.RecordError(rerr)
-	span.SetAttributes(attribute.String("fail.recovery", "internal_error"))
-	span.SetStatus(codes.Error, "internal")
-	return CreateWithdrawalResult{}, rerr
+	return s.reconcile(ctx, p.UserID, p.IdempotencyKey)
 }
 
 func (s *Service) reconcile(
@@ -77,74 +45,63 @@ func (s *Service) reconcile(
 	userID string,
 	idemKey string,
 ) (CreateWithdrawalResult, error) {
-	ctx, span := s.tracer.Start(ctx, "orchestrator.app.reconcile")
+	ctx, span := s.tracer.Start(ctx, spanReconcile)
 	defer span.End()
 
-	span.SetAttributes(attribute.String("idempotency.key", idemKey))
+	span.SetAttributes(
+		attribute.String(telKeyPhase, "reconcile"),
+		attribute.String(telKeyIdemKey, idemKey),
+	)
 
 	idemRow, err := s.repo.GetIdem(ctx, s.db, repo.GetIdemParams{
 		UserID:         userID,
 		IdempotencyKey: idemKey,
 	})
 	if err != nil {
-		span.RecordError(err)
-		span.SetAttributes(attribute.String("reconcile.outcome", "get_idem_failed"))
-		span.SetStatus(codes.Error, "internal")
+		recordInternal(span, err, "get_idem_failed")
 		return CreateWithdrawalResult{}, errInternal(err)
 	}
 
 	span.SetAttributes(
-		attribute.String("idempotency.status", idemRow.Status),
-		attribute.String("withdrawal.id", idemRow.WithdrawalID),
+		attribute.String(telKeyIdemStatus, idemRow.Status),
+		attribute.String(telKeyWithdrawalID, idemRow.WithdrawalID),
 	)
 
 	switch idemRow.Status {
 	case domain.IdemCompleted:
 		if idemRow.ResponseBody == nil {
 			errInv := errors.New("invariant violation: idem completed with NULL response_body")
-			span.RecordError(errInv)
-			span.SetAttributes(
-				attribute.String("reconcile.outcome", "invariant_violation"),
-				attribute.String("invariant", "idem_completed_missing_response_body"),
+			recordInternal(span, errInv, "invariant_violation",
+				attribute.String(telKeyInvariantName, "idem_completed_missing_response_body"),
 			)
-			span.SetStatus(codes.Error, "internal")
 			return CreateWithdrawalResult{}, errInternal(errInv)
 		}
 
 		var res CreateWithdrawalResult
 		if err := codec.DecodeJSONPtr(idemRow.ResponseBody, &res); err != nil {
-			span.RecordError(err)
-			span.SetAttributes(attribute.String("reconcile.outcome", "decode_response_failed"))
-			span.SetStatus(codes.Error, "internal")
+			recordInternal(span, err, "decode_response_failed")
 			return CreateWithdrawalResult{}, errInternal(err)
 		}
 
 		res.replay = true
 		span.SetAttributes(
-			attribute.String("reconcile.outcome", "replayed_completed"),
-			attribute.Bool("idempotency.replay", true),
+			attribute.String(telKeyReconcileOutcome, "replayed_completed"),
+			attribute.Bool(telKeyIdemReplay, true),
 		)
-		span.SetStatus(codes.Ok, "")
 		return res, nil
 	case domain.IdemFailed:
 		if idemRow.AppErrorCode == nil || idemRow.ErrorMessage == nil {
-			errInv := errors.New(
-				"invariant violation: idem failed with NULL error_code/error_message",
+			errInv := errors.New("invariant violation: idem failed with NULL error columns")
+			recordInternal(span, errInv, "invariant_violation",
+				attribute.String(telKeyInvariantName, "idem_failed_missing_error_fields"),
 			)
-			span.RecordError(errInv)
-			span.SetAttributes(
-				attribute.String("reconcile.outcome", "invariant_violation"),
-				attribute.String("invariant", "idem_failed_missing_error_fields"),
-			)
-			span.SetStatus(codes.Error, "internal")
 			return CreateWithdrawalResult{}, errInternal(errInv)
 		}
 
 		span.SetAttributes(
-			attribute.String("reconcile.outcome", "replayed_failed"),
-			attribute.Bool("idempotency.replay", true),
+			attribute.String(telKeyReconcileOutcome, "replayed_failed"),
+			attribute.Bool(telKeyIdemReplay, true),
 		)
-		span.SetStatus(codes.Ok, "")
 
 		return CreateWithdrawalResult{}, apperr.New(
 			*idemRow.AppErrorCode,
@@ -157,15 +114,16 @@ func (s *Service) reconcile(
 		// COMPLETED/FAILED. For simplicity, do not recheck. Either the owner request will return
 		// the finalized status correctly, or a request retry will. To avoid unnecessary requests,
 		// this should reread the idempotency row and/or the withdrawal row.
-		span.SetAttributes(attribute.String("reconcile.outcome", "in_progress"))
-		span.SetStatus(codes.Ok, "")
+		span.SetAttributes(attribute.String(telKeyReconcileOutcome, "in_progress"))
 		return CreateWithdrawalResult{
 			WithdrawalID: idemRow.WithdrawalID,
 			Status:       domain.WithdrawalStatusInProgress,
 		}, nil
 	default:
-		span.SetAttributes(attribute.String("reconcile.outcome", "unknown_status"))
-		span.SetStatus(codes.Error, "internal")
-		return CreateWithdrawalResult{}, errInternal(nil)
+		err := errors.New("unknown idempotency status")
+		recordInternal(span, err, "unknown_status",
+			attribute.String(telKeyReconcileOutcome, "unknown_status"),
+		)
+		return CreateWithdrawalResult{}, errInternal(err)
 	}
 }

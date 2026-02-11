@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -61,50 +60,36 @@ func (s *Service) CreateWithdrawal(
 	ctx context.Context,
 	p CreateWithdrawalParams,
 ) (res CreateWithdrawalResult, err error) {
-	ctx, span := s.tracer.Start(ctx, "orchestrator.app.create_withdrawal")
+	ctx, span := s.tracer.Start(ctx, spanCreateWithdrawal)
 	defer span.End()
-	defer func() {
-		if err == nil {
-			if res.IsReplay() {
-				span.SetAttributes(attribute.String("withdrawal.outcome", "replay"))
-			} else {
-				span.SetAttributes(attribute.String("withdrawal.outcome", "success"))
-			}
-			span.SetStatus(codes.Ok, "")
-			return
-		}
-
-		var ae *apperr.Error
-		isBusinessError := errors.As(err, &ae) && ae.Code != apperr.CodeInternal
-		if isBusinessError {
-			span.SetAttributes(attribute.String("withdrawal.outcome", "business_error"))
-			span.SetStatus(codes.Ok, "")
-			return
-		}
-
-		span.RecordError(err)
-		span.SetAttributes(attribute.String("withdrawal.outcome", "failed"))
-		span.SetStatus(codes.Error, "internal")
-	}()
+	defer func() { recordCreateWithdrawalSpan(span, res, err) }()
 
 	v, err := NewValidatedCreateWithdrawal(p)
 	if err != nil {
-		span.SetAttributes(attribute.Bool("withdrawal.valid", false))
 		return CreateWithdrawalResult{}, errInvalidArgument(err)
 	}
-	span.SetAttributes(attribute.String("idempotency.request_hash", v.RequestHash))
+	span.SetAttributes(
+		attribute.String(telKeyIdemKey, v.IdempotencyKey),
+		attribute.String(telKeyIdemReqHash, v.RequestHash),
+	)
 
 	idemRow, err := s.reserveIdempotency(ctx, v)
 	if err != nil {
 		var cu *postgres.CommitUnknownError
 		if errors.As(err, &cu) {
+			span.SetAttributes(attribute.String(telKeyReconcileReason, "commit_unknown"))
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
-
 		return CreateWithdrawalResult{}, err
 	}
 
+	span.SetAttributes(
+		attribute.String(telKeyWithdrawalID, idemRow.WithdrawalID),
+		attribute.Bool(telKeyIdemOwned, idemRow.Owned),
+	)
+
 	if !idemRow.Owned {
+		span.SetAttributes(attribute.String(telKeyReconcileReason, "not_owned"))
 		return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 	}
 
@@ -122,11 +107,15 @@ func (s *Service) createWithdrawalWork(
 	v validatedCreateWithdrawal,
 	idemRow repo.ReserveIdemResult,
 ) (CreateWithdrawalResult, error) {
-	ctx, span := s.tracer.Start(ctx, "orchestrator.app.create_withdrawal.work")
+	ctx, span := s.tracer.Start(ctx, spanCreateWithdrawalWork)
 	defer span.End()
 	sc := span.SpanContext()
 
-	span.SetAttributes(attribute.String("withdrawal.id", idemRow.WithdrawalID))
+	span.SetAttributes(
+		attribute.String(telKeyPhase, "withdrawal.work"),
+		attribute.String(telKeyWithdrawalID, idemRow.WithdrawalID),
+		attribute.String(telKeyIdemKey, v.IdempotencyKey),
+	)
 
 	finalParams := repo.FinalizeIdemParams{
 		UserID:         v.UserID,
@@ -140,8 +129,7 @@ func (s *Service) createWithdrawalWork(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "encode_identity_failed")
+		recordInternal(span, err, "encode_identity_failed")
 		return s.failAndReconcile(ctx, finalParams, err)
 	}
 	withdrawPayload, err := codec.EncodeValid(&orchestrator.WithdrawalRequestPayload{
@@ -149,8 +137,7 @@ func (s *Service) createWithdrawalWork(
 		UserID:       v.UserID,
 	})
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "encode_withdrawal_failed")
+		recordInternal(span, err, "encode_withdrawal_failed")
 		return s.failAndReconcile(ctx, finalParams, err)
 	}
 
@@ -218,10 +205,9 @@ func (s *Service) createWithdrawalWork(
 	if err != nil {
 		var cu *postgres.CommitUnknownError
 		if errors.As(err, &cu) {
-			span.SetAttributes(attribute.String("withdrawal.work.outcome", "commit_unknown"))
-			span.RecordError(err)
-			span.SetStatus(codes.Error, "commit_unknown")
-
+			recordInternal(span, err, "commit_unknown",
+				attribute.String(telKeyReconcileReason, "commit_unknown"),
+			)
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			defer cancel()
 			return s.reconcile(rctx, v.UserID, v.IdempotencyKey)
@@ -229,27 +215,20 @@ func (s *Service) createWithdrawalWork(
 
 		switch {
 		case errors.Is(err, errNeedReconcileAlreadyExists):
-			span.SetStatus(codes.Ok, "")
-			span.SetAttributes(attribute.String("withdrawal.work.outcome", "already_exists"))
+			span.SetAttributes(attribute.String(telKeyReconcileReason, "already_exists"))
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		case errors.Is(err, errNeedReconcileLostLease):
-			span.SetStatus(codes.Ok, "")
-			span.SetAttributes(attribute.String("withdrawal.work.outcome", "lost_lease"))
+			span.SetAttributes(attribute.String(telKeyReconcileReason, "lost_lease"))
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		case errors.Is(err, errNeedReconcileAlreadyFinalized):
-			span.SetStatus(codes.Ok, "")
-			span.SetAttributes(attribute.String("withdrawal.work.outcome", "already_finalized"))
+			span.SetAttributes(attribute.String(telKeyReconcileReason, "already_finalized"))
 			return s.reconcile(ctx, v.UserID, v.IdempotencyKey)
 		}
 
-		span.SetAttributes(attribute.String("withdrawal.work.outcome", "withdrawal_work_failed"))
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "withdrawal_tx_failed")
+		recordInternal(span, err, "withdrawal_tx_failed")
 		return s.failAndReconcile(ctx, finalParams, err)
 	}
 
-	span.SetStatus(codes.Ok, "")
-	span.SetAttributes(attribute.String("withdrawal.work.outcome", "ok"))
 	return res, nil
 }
 
@@ -257,8 +236,10 @@ func (s *Service) reserveIdempotency(
 	ctx context.Context,
 	v validatedCreateWithdrawal,
 ) (repo.ReserveIdemResult, error) {
-	ctx, span := s.tracer.Start(ctx, "orchestrator.app.reserve_idempotency")
+	ctx, span := s.tracer.Start(ctx, spanReserveIdem)
 	defer span.End()
+
+	span.SetAttributes(attribute.String(telKeyPhase, "idempotency_reserve"))
 
 	reserveTxFunc := func(ctx context.Context, tx pgx.Tx) (repo.ReserveIdemResult, error) {
 		return s.repo.ReserveIdemTx(ctx, tx, repo.ReserveIdemParams{
@@ -283,28 +264,22 @@ func (s *Service) reserveIdempotency(
 		var cu *postgres.CommitUnknownError
 		switch {
 		case errors.Is(err, repo.ErrIdempotencyKeyReuse):
-			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_key_reuse"))
-			span.SetStatus(codes.Ok, "")
+			span.SetAttributes(attribute.String(telKeyIdemOutcome, "idempotency_key_reuse"))
 			return repo.ReserveIdemResult{}, errInvalidArgument(err)
 		case errors.As(err, &cu):
-			span.SetAttributes(attribute.String("idempotency.outcome", "commit_unknown"))
-			span.SetStatus(codes.Error, "commit_unknown")
-			span.RecordError(err)
+			recordInternal(span, err, "commit_unknown")
 			return repo.ReserveIdemResult{}, err
 		default:
-			span.SetAttributes(attribute.String("idempotency.outcome", "idempotency_failed"))
-			span.SetStatus(codes.Error, "reserve_idempotency_failed")
-			span.RecordError(err)
+			recordInternal(span, err, "reserve_idempotency_failed")
 			return repo.ReserveIdemResult{}, errInternal(err)
 		}
 	}
 
 	span.SetAttributes(
-		attribute.String("withdrawal.id", idemRow.WithdrawalID),
-		attribute.Bool("idempotency.owned", idemRow.Owned),
-		attribute.String("idempotency.outcome", "reserved"),
+		attribute.String(telKeyWithdrawalID, idemRow.WithdrawalID),
+		attribute.Bool(telKeyIdemOwned, idemRow.Owned),
+		attribute.String(telKeyIdemOutcome, "reserved"),
 	)
-	span.SetStatus(codes.Ok, "")
 
 	return idemRow, nil
 }
@@ -336,6 +311,29 @@ func (s *Service) failIdempotencyWithRetry(
 		failIdemRetryPolicy(),
 		txFunc,
 	)
+}
+
+func recordCreateWithdrawalSpan(span trace.Span, res CreateWithdrawalResult, err error) {
+	if err == nil {
+		if res.IsReplay() {
+			span.SetAttributes(attribute.String(telKeyWithdrawalOutcome, "replay"))
+		} else {
+			span.SetAttributes(attribute.String(telKeyWithdrawalOutcome, "success"))
+		}
+		return
+	}
+
+	var ae *apperr.Error
+	isBusinessError := errors.As(err, &ae) && ae.Code != apperr.CodeInternal
+	if isBusinessError {
+		span.SetAttributes(
+			attribute.String(telKeyWithdrawalOutcome, "business_error"),
+			attribute.String("app.error.code", string(ae.Code)),
+		)
+		return
+	}
+
+	recordInternal(span, err, "failed")
 }
 
 type GetWithdrawalParams struct {
