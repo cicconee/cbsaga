@@ -12,31 +12,12 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/apperr"
 	"github.com/cicconee/cbsaga/internal/platform/codec"
 	"github.com/cicconee/cbsaga/internal/platform/db/postgres"
-	"github.com/cicconee/cbsaga/internal/platform/logging"
 	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
-
-type Service struct {
-	db     *pgxpool.Pool
-	repo   *repo.Repo
-	log    *logging.Logger
-	tracer trace.Tracer
-}
-
-func NewService(db *pgxpool.Pool, log *logging.Logger) *Service {
-	return &Service{
-		db:     db,
-		repo:   repo.New(),
-		log:    log,
-		tracer: otel.Tracer("orchestrator/app"),
-	}
-}
 
 type CreateWithdrawalParams struct {
 	UserID          string
@@ -334,46 +315,4 @@ func recordCreateWithdrawalSpan(span trace.Span, res CreateWithdrawalResult, err
 	}
 
 	recordInternal(span, err, "failed")
-}
-
-type GetWithdrawalParams struct {
-	WithdrawalID string
-}
-
-type GetWithdrawalResult struct {
-	WithdrawalID    string
-	UserID          string
-	Asset           string
-	AmountMinor     int64
-	DestinationAddr string
-	Status          string
-	FailureReason   *string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
-func (s *Service) GetWithdrawal(
-	ctx context.Context,
-	p GetWithdrawalParams,
-) (GetWithdrawalResult, error) {
-	row, err := s.repo.GetWithdrawal(
-		ctx,
-		s.db,
-		repo.GetWithdrawalParams{WithdrawalID: p.WithdrawalID},
-	)
-	if err != nil {
-		return GetWithdrawalResult{}, err
-	}
-
-	return GetWithdrawalResult{
-		WithdrawalID:    row.WithdrawalID,
-		UserID:          row.UserID,
-		Asset:           row.Asset,
-		AmountMinor:     row.AmountMinor,
-		DestinationAddr: row.DestinationAddr,
-		Status:          row.Status,
-		FailureReason:   row.FailureReason,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-	}, nil
 }
