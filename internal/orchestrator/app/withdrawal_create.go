@@ -15,7 +15,9 @@ import (
 	"github.com/cicconee/cbsaga/internal/platform/retry"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -122,6 +124,11 @@ func (s *Service) createWithdrawalWork(
 		return s.failAndReconcile(ctx, finalParams, err)
 	}
 
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	tp := carrier.Get("traceparent")
+	ts := carrier.Get("tracestate")
+
 	txFunc := func(ctx context.Context, tx pgx.Tx) (CreateWithdrawalResult, error) {
 		workRes, err := s.repo.CreateWithdrawalTx(ctx, tx, repo.CreateWithdrawalParams{
 			WithdrawalID:    idemRow.WithdrawalID,
@@ -133,14 +140,18 @@ func (s *Service) createWithdrawalWork(
 			TraceID:         sc.TraceID().String(),
 			OutboxEvents: []repo.OutboxEvent{
 				{
-					EventType: orchestrator.EventTypeWithdrawalRequested,
-					Payload:   string(withdrawPayload),
-					RouteKey:  orchestrator.RouteKeyWithdrawalEvt,
+					EventType:   orchestrator.EventTypeWithdrawalRequested,
+					Payload:     string(withdrawPayload),
+					RouteKey:    orchestrator.RouteKeyWithdrawalEvt,
+					TraceParent: tp,
+					TraceState:  ts,
 				},
 				{
-					EventType: identity.EventTypeIdentityRequested,
-					Payload:   string(identityPayload),
-					RouteKey:  identity.RouteKeyIdentityCmd,
+					EventType:   identity.EventTypeIdentityRequested,
+					Payload:     string(identityPayload),
+					RouteKey:    identity.RouteKeyIdentityCmd,
+					TraceParent: tp,
+					TraceState:  ts,
 				},
 			},
 		})

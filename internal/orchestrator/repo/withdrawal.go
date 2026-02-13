@@ -14,9 +14,11 @@ import (
 var ErrWithdrawalAlreadyExists = errors.New("withdrawal already exists")
 
 type OutboxEvent struct {
-	EventType string
-	Payload   string
-	RouteKey  string
+	EventType   string
+	Payload     string
+	RouteKey    string
+	TraceParent string
+	TraceState  string
 }
 
 type CreateWithdrawalParams struct {
@@ -106,7 +108,9 @@ func (r *Repo) CreateWithdrawalTx(
 			event_type,
 			payload_json,
 			trace_id,
-			route_key
+			route_key,
+			traceparent,
+			tracestate
 		)
 		VALUES (
 			gen_random_uuid(),
@@ -115,7 +119,9 @@ func (r *Repo) CreateWithdrawalTx(
 			$3,
 			$4,
 			$5,
-			$6
+			$6,
+			$7,
+			$8
 		)
 	`,
 			domain.AggregateTypeWithdrawal,
@@ -124,6 +130,8 @@ func (r *Repo) CreateWithdrawalTx(
 			evt.Payload,
 			p.TraceID,
 			evt.RouteKey,
+			evt.TraceParent,
+			evt.TraceState,
 		)
 		if err != nil {
 			return CreateWithdrawalResult{}, err
