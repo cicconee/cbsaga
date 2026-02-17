@@ -20,6 +20,8 @@ type VerifyAndEmitParams struct {
 	OutboxPayload   string
 	TraceID         string
 	RouteKey        string
+	TraceParent     string
+	TraceState      string
 }
 
 func (r *Repo) VerifyAndEmitTx(ctx context.Context, tx pgx.Tx, p VerifyAndEmitParams) error {
@@ -39,9 +41,9 @@ func (r *Repo) VerifyAndEmitTx(ctx context.Context, tx pgx.Tx, p VerifyAndEmitPa
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO identity.outbox_events
-			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id, route_key)
+			(event_id, aggregate_type, aggregate_id, event_type, payload_json, trace_id, route_key, traceparent, tracestate)
 		VALUES
-			(gen_random_uuid(), 'identity', $1, $2, $3, $4, $5)
-	`, p.VerificationID, p.OutboxEventType, p.OutboxPayload, p.TraceID, p.RouteKey)
+			(gen_random_uuid(), 'identity', $1, $2, $3, $4, $5, $6, $7)
+	`, p.VerificationID, p.OutboxEventType, p.OutboxPayload, p.TraceID, p.RouteKey, p.TraceParent, p.TraceState)
 	return err
 }
